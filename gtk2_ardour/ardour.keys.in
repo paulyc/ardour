@@ -149,12 +149,15 @@ This mode provides many different operations on both regions and control points,
 
 @gmark|Common/jump-backward-to-mark|q|to previous mark
 @sess|Common/Quit|<@PRIMARY@>q|quit
+
 @gmark|Common/jump-forward-to-mark|w|to next mark
+
 @select|Editor/select-all-before-edit-cursor|<@PRIMARY@>e|select all before EP
 @rop|Region/export-region|<@PRIMARY@><@SECONDARY@>e|export selected region(s)
 @sess|Main/ExportAudio|<@SECONDARY@>e|export session
 @select|Editor/select-all-after-edit-cursor|<@PRIMARY@><@TERTIARY@>e|select all after EP
 @vis|Editor/show-editor-mixer|<@TERTIARY@>e|toggle editor window mixer
+
 @mmode|MouseMode/set-mouse-mode-range|r|range mode
 @edit|Editor/redo|<@PRIMARY@>r|redo
 @trans|Transport/Record|<@TERTIARY@>r|engage record
@@ -183,27 +186,36 @@ This mode provides many different operations on both regions and control points,
 @aep|Region/align-regions-sync|<@TERTIARY@>a|align sync points
 @aep|Region/align-regions-start|<@PRIMARY@><@SECONDARY@>a|align start(s)
 @aep|Region/align-regions-start-relative|<@PRIMARY@><@TERTIARY@>a|align start(s) relative
+
 @rop|Editor/split-region|s|split
 @sess|Common/Save|<@PRIMARY@>s|save session
 @sess|Main/SnapshotStay|<@PRIMARY@><@TERTIARY@>s|snapshot session
-@edtrk|Editor/track-solo-toggle|<@SECONDARY@>s|toggle track solo status
+@edtrk|Editor/track-solo-toggle|<@TERTIARY@>s|toggle track solo status
+@wvis|Window/ToggleSummary|<@SECONDARY@>s|toggle summary
+
 @mmode|MouseMode/set-mouse-mode-draw|d|note-draw mode
 @edit|Editor/duplicate|<@SECONDARY@>d|duplicate (once)
 @edit|Editor/multi-duplicate|<@TERTIARY@>d|duplicate (multi)
 @select|Editor/select-all-in-punch-range|<@PRIMARY@>d|select all in punch range
+
 @vis|Editor/fit-selection|f|fit selection vertically
 @edit|Editor/toggle-follow-playhead|<@PRIMARY@>f|toggle playhead tracking
 @edit|Editor/toggle-stationary-playhead|<@TERTIARY@>f|toggle stationary playhead
 @rop|Region/show-rhythm-ferret|<@SECONDARY@>f|show rhythm ferret window 
 @wvis|Common/ToggleMaximalEditor|<@PRIMARY@><@SECONDARY@>f|maximise editor space
 @wvis|Common/ToggleMaximalMixer|<@PRIMARY@><@TERTIARY@>f|maximise mixer space
+
 @edit|Region/play-selected-regions|h|play selected region(s)
+
 @eep|Region/trim-front|j|trim front
+
 @eep|Region/trim-back|k|trim back
 @wvis|Window/toggle-key-editor|<@SECONDARY@>k|toggle key bindings editor
+
 @trans|Transport/Loop|l|loop play (the loop range)
 @select|Editor/select-all-in-loop-range|<@PRIMARY@>l|select all in loop range
 @wvis|Window/toggle-locations|<@SECONDARY@>l| toggle locations dialog
+@edit|Editor/show-editor-list|<@TERTIARY@>l| show editor list
 
 ;; BOTTOM ROW
 
@@ -221,7 +233,9 @@ This mode provides many different operations on both regions and control points,
 @edit|Editor/editor-paste|<@PRIMARY@>v|paste
 @edit|Editor/ToggleJadeo|<@SECONDARY@>v|video window
 @wvis|Common/toggle-meterbridge|<@SECONDARY@>b|show meter bridge
+
 @edtrk|Editor/track-record-enable-toggle|<@TERTIARY@>b|toggle track rec-enable 
+
 @sess|Main/AddTrackBus|<@PRIMARY@><@TERTIARY@>n|add track(s) or bus(ses)
 @sess|Main/New|<@PRIMARY@>n|open a new session
 @wvis|Window/toggle-midi-connection-manager|<@SECONDARY@><@TERTIARY@>m|toggle global midi patchbay

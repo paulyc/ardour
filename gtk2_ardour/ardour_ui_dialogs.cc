@@ -964,29 +964,29 @@ ARDOUR_UI::toggle_mixer_space()
 void
 ARDOUR_UI::toggle_mixer_list()
 {
-	Glib::RefPtr<Action> act = ActionManager::get_action ("Common", "ToggleMixerList");
+	Glib::RefPtr<Action> act = ActionManager::get_action ("Mixer", "ToggleMixerList");
 
 	if (act) {
 		Glib::RefPtr<ToggleAction> tact = Glib::RefPtr<ToggleAction>::cast_dynamic(act);
-			mixer->show_mixer_list (tact->get_active());
+			mixer->showhide_mixer_list (tact->get_active());
 	}
 }
 
 void
 ARDOUR_UI::toggle_monitor_section_visibility ()
 {
-	Glib::RefPtr<Action> act = ActionManager::get_action ("Common", "ToggleMonitorSection");
+	Glib::RefPtr<Action> act = ActionManager::get_action ("Mixer", "ToggleMonitorSection");
 
 	if (act) {
 		Glib::RefPtr<ToggleAction> tact = Glib::RefPtr<ToggleAction>::cast_dynamic(act);
-			mixer->show_monitor_section (tact->get_active());
+			mixer->showhide_monitor_section (tact->get_active());
 	}
 }
 
 void
 ARDOUR_UI::toggle_vca_pane ()
 {
-	Glib::RefPtr<Action> act = ActionManager::get_action ("Common", "ToggleVCAPane");
+	Glib::RefPtr<Action> act = ActionManager::get_action ("Mixer", "ToggleVCAPane");
 
 	if (act) {
 		Glib::RefPtr<ToggleAction> tact = Glib::RefPtr<ToggleAction>::cast_dynamic(act);
@@ -998,7 +998,7 @@ ARDOUR_UI::toggle_vca_pane ()
 void
 ARDOUR_UI::toggle_mixbus_pane ()
 {
-	Glib::RefPtr<Action> act = ActionManager::get_action ("Common", "ToggleMixbusPane");
+	Glib::RefPtr<Action> act = ActionManager::get_action ("Mixer", "ToggleMixbusPane");
 
 	if (act) {
 		Glib::RefPtr<ToggleAction> tact = Glib::RefPtr<ToggleAction>::cast_dynamic(act);
