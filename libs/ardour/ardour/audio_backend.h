@@ -626,7 +626,7 @@ class LIBARDOUR_API AudioBackend : public PortEngine {
     virtual void transport_stop () {}
     /** return the current transport state
      */
-    virtual TransportState transport_state () const { return TransportStopped; }
+    virtual EngineTransportState transport_state () const { return TransportStopped; }
     /** Attempt to locate the transport to @param pos
      */
     virtual void transport_locate (samplepos_t /*pos*/) {}

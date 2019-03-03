@@ -180,7 +180,7 @@ Session::timecode_time (Timecode::Time &t)
 }
 
 int
-Session::backend_sync_callback (TransportState state, samplepos_t pos)
+Session::backend_sync_callback (EngineTransportState state, samplepos_t pos)
 {
 	bool slave = synced_to_engine();
 	// cerr << "Session::backend_sync_callback() _transport_sample: " << _transport_sample << " pos: " << pos << " audible_sample: " << audible_sample() << endl;

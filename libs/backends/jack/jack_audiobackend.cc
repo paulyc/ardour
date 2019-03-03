@@ -646,12 +646,12 @@ JACKAudioBackend::transport_sample () const
 	return jack_get_current_transport_frame (_priv_jack);
 }
 
-TransportState
+EngineTransportState
 JACKAudioBackend::transport_state () const
 {
-	GET_PRIVATE_JACK_POINTER_RET (_priv_jack, ((TransportState) JackTransportStopped));
+	GET_PRIVATE_JACK_POINTER_RET (_priv_jack, ((EngineTransportState) JackTransportStopped));
 	jack_position_t pos;
-	return (TransportState) jack_transport_query (_priv_jack, &pos);
+	return (EngineTransportState) jack_transport_query (_priv_jack, &pos);
 }
 
 int
@@ -776,7 +776,7 @@ JACKAudioBackend::_jack_sync_callback (jack_transport_state_t state, jack_positi
 int
 JACKAudioBackend::jack_sync_callback (jack_transport_state_t state, jack_position_t* pos)
 {
-	TransportState tstate;
+	EngineTransportState tstate;
 	bool tstate_valid = true;
 
 	switch (state) {

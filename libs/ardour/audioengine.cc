@@ -1072,7 +1072,7 @@ AudioEngine::transport_stop ()
 	return _backend->transport_stop ();
 }
 
-TransportState
+EngineTransportState
 AudioEngine::transport_state ()
 {
 	if (!_backend) {
@@ -1312,7 +1312,7 @@ AudioEngine::thread_init_callback (void* arg)
 }
 
 int
-AudioEngine::sync_callback (TransportState state, samplepos_t position)
+AudioEngine::sync_callback (EngineTransportState state, samplepos_t position)
 {
 	if (_session) {
 		return _session->backend_sync_callback (state, position);

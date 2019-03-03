@@ -87,7 +87,7 @@ class LIBARDOUR_API AudioEngine : public PortManager, public SessionHandlePtr
 	float          get_dsp_load() const ;
 	void           transport_start ();
 	void           transport_stop ();
-	TransportState transport_state ();
+	EngineTransportState transport_state ();
 	void           transport_locate (samplepos_t pos);
 	samplepos_t     transport_sample();
 	samplecnt_t     sample_rate () const;
@@ -215,8 +215,8 @@ class LIBARDOUR_API AudioEngine : public PortManager, public SessionHandlePtr
 	int  buffer_size_change (pframes_t nframes);
 	int  sample_rate_change (pframes_t nframes);
 	void freewheel_callback (bool);
-	void timebase_callback (TransportState state, pframes_t nframes, samplepos_t pos, int new_position);
-	int  sync_callback (TransportState state, samplepos_t position);
+	void timebase_callback (EngineTransportState state, pframes_t nframes, samplepos_t pos, int new_position);
+	int  sync_callback (EngineTransportState state, samplepos_t position);
 	int  port_registration_callback ();
 	void latency_callback (bool for_playback);
 	void halted_callback (const char* reason);

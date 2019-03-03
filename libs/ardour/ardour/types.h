@@ -692,7 +692,7 @@ enum FadeShape {
 	FadeSymmetric,
 };
 
-enum TransportState {
+enum EngineTransportState {
 	/* these values happen to match the constants used by JACK but
 	   this equality cannot be assumed.
 	*/

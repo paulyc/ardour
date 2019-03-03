@@ -180,6 +180,8 @@ Session::Session (AudioEngine &eng,
 	, _current_sample_rate (0)
 	, transport_sub_state (0)
 	, _record_status (Disabled)
+	, _transport_state (transportStopped)
+	, _post_butler_transport_state (transportStopped)
 	, _transport_sample (0)
 	, _seek_counter (0)
 	, _session_range_location (0)

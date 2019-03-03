@@ -1241,6 +1241,18 @@ private:
 	samplecnt_t             _current_sample_rate;  // this includes video pullup offset
 	int                      transport_sub_state;
 	mutable gint            _record_status;
+
+	enum TransportState {
+		transportStopped,
+		transportRolling,
+		transportDeclickOut,
+		transportLocateWait,
+		transportMasterWait,
+		transportButlerWait,
+	};
+
+	TransportState          _transport_state;
+	TransportState          _post_butler_transport_state;
 	samplepos_t             _transport_sample;
 	gint                    _seek_counter;
 	Location*               _session_range_location; ///< session range, or 0 if there is nothing in the session yet
@@ -1650,6 +1662,8 @@ private:
 	bool should_ignore_transport_request (TransportRequestSource, TransportRequestType) const;
 	bool declick_in_progress () const;
 
+	void update_transport_state (samplepos_t now);
+
 	void set_play_loop (bool yn, double speed);
 	void unset_play_loop ();
 	void overwrite_some_buffers (Track *);
@@ -1853,7 +1867,7 @@ private:
 	 */
 	std::list<GQuark> _current_trans_quarks;
 
-	int  backend_sync_callback (TransportState, samplepos_t);
+	int  backend_sync_callback (EngineTransportState, samplepos_t);
 
 	void process_rtop (SessionEvent*);
 

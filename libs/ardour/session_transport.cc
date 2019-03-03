@@ -61,6 +61,25 @@ using namespace ARDOUR;
 using namespace PBD;
 
 void
+Session::update_transport_state (samplepos_t now)
+{
+	switch (_transport_state) {
+	case transportStopped:
+		break;
+	case transportRolling:
+		break;
+	case transportDeclickOut:
+		break;
+	case transportLocateWait:
+		break;
+	case transportMasterWait:
+		break;
+	case transportButlerWait:
+		break;
+	}
+}
+
+void
 Session::add_post_transport_work (PostTransportWork ptw)
 {
 	PostTransportWork oldval;

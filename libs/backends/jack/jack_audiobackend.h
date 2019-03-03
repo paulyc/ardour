@@ -114,7 +114,7 @@ class JACKAudioBackend : public AudioBackend {
     void transport_start ();
     void transport_stop ();
     void transport_locate (samplepos_t /*pos*/);
-    TransportState transport_state () const;
+    EngineTransportState transport_state () const;
     samplepos_t transport_sample() const;
 
     int set_time_master (bool /*yn*/);
