@@ -1,21 +1,25 @@
 /*
-    Copyright (C) 2000-2007 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2000-2013 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2005-2006 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2008-2011 David Robillard <d@drobilla.net>
+ * Copyright (C) 2009-2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2018 Ben Loftis <ben@harrisonconsoles.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_plugin_manager_h__
 #define __ardour_plugin_manager_h__
@@ -119,31 +123,32 @@ public:
 private:
 
 	struct PluginTag {
-	    ARDOUR::PluginType type;
-	    std::string unique_id;
-	    std::string tags;
-	    std::string name;
+		ARDOUR::PluginType type;
+		std::string unique_id;
+		std::string tags;
+		std::string name;
 		TagType tagtype;
 
-	    PluginTag (ARDOUR::PluginType t, std::string id, std::string tag, std::string n, TagType tt)
-	    : type (t), unique_id (id), tags (tag), name(n), tagtype (tt) {}
+		PluginTag (ARDOUR::PluginType t, std::string id, std::string tag, std::string n, TagType tt)
+			: type (t), unique_id (id), tags (tag), name(n), tagtype (tt) {}
 
-	    bool operator== (PluginTag const& other) const {
-		    return other.type == type && other.unique_id == unique_id;
-	    }
+		bool operator== (PluginTag const& other) const {
+			return other.type == type && other.unique_id == unique_id;
+		}
 
-	    bool operator< (PluginTag const& other) const {
-		    if (other.type < type) {
-			    return true;
-		    } else if (other.type == type && other.unique_id < unique_id) {
-			    return true;
-		    }
-		    return false;
-	    }
+		bool operator< (PluginTag const& other) const {
+			if (other.type < type) {
+				return true;
+			} else if (other.type == type && other.unique_id < unique_id) {
+				return true;
+			}
+			return false;
+		}
 	};
 
 	typedef std::set<PluginTag> PluginTagList;
 	PluginTagList ptags;
+	PluginTagList ftags; /* factory-file defaults */
 
 	std::string sanitize_tag (const std::string) const;
 
@@ -187,6 +192,9 @@ private:
 
 	bool _cancel_scan;
 	bool _cancel_timeout;
+
+	void detect_name_ambiguities (ARDOUR::PluginInfoList*);
+	void detect_type_ambiguities (ARDOUR::PluginInfoList&);
 
 	void ladspa_refresh ();
 	void lua_refresh ();

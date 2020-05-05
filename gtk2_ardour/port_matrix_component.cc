@@ -1,25 +1,27 @@
 /*
-    Copyright (C) 2002-2009 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2009-2010 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2009-2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2009-2011 David Robillard <d@drobilla.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include "port_matrix_component.h"
 #include "port_matrix.h"
 #include "port_matrix_body.h"
+#include "ui_config.h"
 
 using namespace std;
 
@@ -41,7 +43,7 @@ PortMatrixComponent::PortMatrixComponent (PortMatrix* m, PortMatrixBody* b)
 PortMatrixComponent::~PortMatrixComponent ()
 {
 	if (_pixmap) {
-		g_object_unref (_pixmap);
+		gdk_pixmap_unref (_pixmap);
 	}
 }
 
@@ -74,12 +76,13 @@ PortMatrixComponent::get_pixmap (GdkDrawable *drawable)
 
 		/* make a pixmap of the right size */
 		if (_pixmap) {
-			g_object_unref (_pixmap);
+			gdk_pixmap_unref (_pixmap);
 		}
 		_pixmap = gdk_pixmap_new (drawable, _width, _height, -1);
 
 		/* render */
 		cairo_t* cr = gdk_cairo_create (_pixmap);
+		cairo_set_font_size (cr, UIConfiguration::instance().get_ui_scale() * 10);
 		render (cr);
 		cairo_destroy (cr);
 
@@ -213,4 +216,10 @@ PortMatrixComponent::position_to_channel (double p, double, boost::shared_ptr<co
 	}
 
 	return ARDOUR::BundleChannel (boost::shared_ptr<ARDOUR::Bundle> (), -1);
+}
+
+uint32_t
+PortMatrixComponent::grid_spacing ()
+{
+	return UIConfiguration::instance().get_ui_scale() * 24;
 }

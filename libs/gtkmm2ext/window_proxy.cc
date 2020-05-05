@@ -1,21 +1,21 @@
 /*
-    Copyright (C) 2015 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2015-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2017-2018 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <gtkmm/action.h>
 #include <gtkmm/window.h>
@@ -30,19 +30,6 @@
 using namespace Gtk;
 using namespace Gtkmm2ext;
 using namespace PBD;
-
-WindowProxy::WindowProxy (const std::string& name)
-	: _name (name)
-	, _window (0)
-	, _visible (false)
-	, _x_off (-1)
-	, _y_off (-1)
-	, _width (-1)
-	, _height (-1)
-	, vistracker (0)
-	, _state_mask (StateMask (Position|Size))
-{
-}
 
 WindowProxy::WindowProxy (const std::string& name, const std::string& menu_name)
 	: _name (name)

@@ -1,20 +1,25 @@
 /*
-    Copyright (C) 2001, 2006 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2006-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2007-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2007 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2014-2017 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015-2016 Nick Mainsbridge <mainsbridge@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <cmath>
 #include <cassert>
@@ -39,7 +44,6 @@
 
 #include "audio_streamview.h"
 #include "audio_region_view.h"
-#include "tape_region_view.h"
 #include "audio_time_axis.h"
 #include "region_selection.h"
 #include "region_gain_line.h"
@@ -109,10 +113,7 @@ AudioStreamView::create_region_view (boost::shared_ptr<Region> r, bool wait_for_
 					_samples_per_pixel, region_color);
 		}
 		break;
-	case Destructive:
-		region_view = new TapeAudioRegionView (_canvas_group, _trackview, region,
-		                                       _samples_per_pixel, region_color);
-		break;
+
 	default:
 		fatal << string_compose (_("programming error: %1"), "illegal track mode in ::create_region_view()") << endmsg;
 		abort(); /*NOTREACHED*/
@@ -177,11 +178,25 @@ AudioStreamView::redisplay_track ()
 }
 
 void
+AudioStreamView::reload_waves ()
+{
+	list<RegionView *>::iterator i;
+	for (i = region_views.begin(); i != region_views.end(); ++i) {
+		AudioRegionView* arv = dynamic_cast<AudioRegionView*> (*i);
+		if (!arv) {
+			continue;
+		}
+		arv->delete_waves();
+		arv->create_waves();
+	}
+}
+
+void
 AudioStreamView::setup_rec_box ()
 {
 	//cerr << _trackview.name() << " streamview SRB region_views.size() = " << region_views.size() << endl;
 
-	if (!_trackview.session()->transport_stopped()) {
+	if (!_trackview.session()->transport_stopped_or_stopping()) {
 
 		// cerr << "\trolling\n";
 
@@ -235,9 +250,8 @@ AudioStreamView::setup_rec_box ()
 
 			boost::shared_ptr<AudioTrack> at = _trackview.audio_track();
 			samplepos_t const sample_pos = at->current_capture_start ();
-			double     const width     = ((at->mode() == Destructive) ? 2 : 0);
 
-			create_rec_box(sample_pos, width);
+			create_rec_box(sample_pos, 0);
 
 		} else if (rec_active &&
 		           (_trackview.session()->record_status() != Session::Recording ||

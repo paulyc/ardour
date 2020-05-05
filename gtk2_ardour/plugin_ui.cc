@@ -1,21 +1,27 @@
 /*
-    Copyright (C) 2000 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2006 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2005-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2005 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2006-2009 Sampo Savolainen <v2@iki.fi>
+ * Copyright (C) 2006-2015 David Robillard <d@drobilla.net>
+ * Copyright (C) 2009-2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2012-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013-2018 John Emmas <john@creativepost.co.uk>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifdef WAF_BUILD
 #include "gtk2ardour-config.h"
@@ -167,6 +173,7 @@ PluginUIWindow::PluginUIWindow (
 		if (h > 600) h = 600;
 	}
 
+	set_border_width (0);
 	set_default_size (w, h);
 	set_resizable (_pluginui->resizable());
 }
@@ -432,13 +439,13 @@ PluginUIWindow::on_key_release_event (GdkEventKey *event)
 		if (_pluginui) {
 			if (_pluginui->non_gtk_gui()) {
 				_pluginui->forward_key_event (event);
+				return true;
 			}
 		}
 	} else {
 		gtk_window_propagate_key_event (GTK_WINDOW(gobj()), event);
 	}
-	/* don't forward releases */
-	return true;
+	return relay_key_press (event, this);
 }
 
 void
@@ -459,6 +466,7 @@ PlugUIBase::PlugUIBase (boost::shared_ptr<PluginInsert> pi)
 	, add_button (_("Add"))
 	, save_button (_("Save"))
 	, delete_button (_("Delete"))
+	, preset_browser_button (_("Preset Browser"))
 	, reset_button (_("Reset"))
 	, bypass_button (ArdourButton::led_default_elements)
 	, pin_management_button (_("Pinout"))
@@ -470,6 +478,7 @@ PlugUIBase::PlugUIBase (boost::shared_ptr<PluginInsert> pi)
 	, eqgui (0)
 	, stats_gui (0)
 	, preset_gui (0)
+	, preset_dialog (0)
 {
 	_preset_modified.set_size_request (16, -1);
 	_preset_combo.set_text("(default)");
@@ -477,33 +486,51 @@ PlugUIBase::PlugUIBase (boost::shared_ptr<PluginInsert> pi)
 	set_tooltip (add_button, _("Save a new preset"));
 	set_tooltip (save_button, _("Save the current preset"));
 	set_tooltip (delete_button, _("Delete the current preset"));
+	set_tooltip (preset_browser_button, _("Show Preset Browser Dialog"));
 	set_tooltip (reset_button, _("Reset parameters to default (if no parameters are in automation play mode)"));
 	set_tooltip (pin_management_button, _("Show Plugin Pin Management Dialog"));
 	set_tooltip (bypass_button, _("Disable signal processing by the plugin"));
+	set_tooltip (latency_button, _("Edit Plugin Delay/Latency Compensation"));
 	_no_load_preset = 0;
 
 	update_preset_list ();
 	update_preset ();
 
+	latency_button.set_icon (ArdourIcon::LatencyClock);
+	latency_button.add_elements (ArdourButton::Text);
+	latency_button.signal_clicked.connect (sigc::mem_fun (*this, &PlugUIBase::latency_button_clicked));
+	set_latency_label ();
+
 	add_button.set_name ("generic button");
+	add_button.set_icon (ArdourIcon::PsetAdd);
 	add_button.signal_clicked.connect (sigc::mem_fun (*this, &PlugUIBase::add_plugin_setting));
 
 	save_button.set_name ("generic button");
+	save_button.set_icon (ArdourIcon::PsetSave);
 	save_button.signal_clicked.connect(sigc::mem_fun(*this, &PlugUIBase::save_plugin_setting));
 
 	delete_button.set_name ("generic button");
+	delete_button.set_icon (ArdourIcon::PsetDelete);
 	delete_button.signal_clicked.connect (sigc::mem_fun (*this, &PlugUIBase::delete_plugin_setting));
 
+	preset_browser_button.set_name ("generic button");
+	preset_browser_button.set_icon (ArdourIcon::PsetBrowse);
+	preset_browser_button.signal_clicked.connect (sigc::mem_fun (*this, &PlugUIBase::browse_presets));
+
 	reset_button.set_name ("generic button");
+	reset_button.set_icon (ArdourIcon::PluginReset);
 	reset_button.signal_clicked.connect (sigc::mem_fun (*this, &PlugUIBase::reset_plugin_parameters));
 
 	pin_management_button.set_name ("generic button");
+	pin_management_button.set_icon (ArdourIcon::PluginPinout);
 	pin_management_button.signal_clicked.connect (sigc::mem_fun (*this, &PlugUIBase::manage_pins));
+
 
 	insert->ActiveChanged.connect (active_connection, invalidator (*this), boost::bind (&PlugUIBase::processor_active_changed, this,  boost::weak_ptr<Processor>(insert)), gui_context());
 
 	bypass_button.set_name ("plugin bypass button");
 	bypass_button.set_text (_("Bypass"));
+	bypass_button.set_icon (ArdourIcon::PluginBypass);
 	bypass_button.set_active (!pi->enabled ());
 	bypass_button.signal_button_release_event().connect (sigc::mem_fun(*this, &PlugUIBase::bypass_button_release), false);
 	focus_button.add_events (Gdk::ENTER_NOTIFY_MASK|Gdk::LEAVE_NOTIFY_MASK);
@@ -551,6 +578,7 @@ PlugUIBase::~PlugUIBase()
 	delete preset_gui;
 	delete latency_gui;
 	delete latency_dialog;
+	delete preset_dialog;
 }
 
 void
@@ -565,17 +593,9 @@ void
 PlugUIBase::set_latency_label ()
 {
 	samplecnt_t const l = insert->effective_latency ();
-	samplecnt_t const sr = insert->session().sample_rate ();
+	float const sr = insert->session().sample_rate ();
 
-	string t;
-
-	if (l < sr / 1000) {
-		t = string_compose (P_("latency (%1 sample)", "latency (%1 samples)", l), l);
-	} else {
-		t = string_compose (_("latency (%1 ms)"), (float) l / ((float) sr / 1000.0f));
-	}
-
-	latency_button.set_text (t);
+	latency_button.set_text (samples_as_time_string (l, sr, true));
 }
 
 void
@@ -624,27 +644,9 @@ PlugUIBase::preset_selected (Plugin::PresetRecord preset)
 	}
 }
 
-#ifdef NO_PLUGIN_STATE
-static bool seen_saving_message = false;
-
-static void show_no_plugin_message()
-{
-	info << string_compose (_("Plugin presets are not supported in this build of %1. Consider paying for a full version"),
-			PROGRAM_NAME)
-	     << endmsg;
-	info << _("To get full access to updates without this limitation\n"
-	          "consider becoming a subscriber for a low cost every month.")
-	     << endmsg;
-	info << X_("https://community.ardour.org/s/subscribe")
-	     << endmsg;
-	ARDOUR_UI::instance()->popup_error(_("Plugin presets are not supported in this build, see the Log window for more information."));
-}
-#endif
-
 void
 PlugUIBase::add_plugin_setting ()
 {
-#ifndef NO_PLUGIN_STATE
 	NewPluginPresetDialog d (plugin, _("New Preset"));
 
 	switch (d.run ()) {
@@ -663,43 +665,23 @@ PlugUIBase::add_plugin_setting ()
 		}
 		break;
 	}
-#else
-	if (!seen_saving_message) {
-		seen_saving_message = true;
-		show_no_plugin_message();
-	}
-#endif
 }
 
 void
 PlugUIBase::save_plugin_setting ()
 {
-#ifndef NO_PLUGIN_STATE
 	string const name = _preset_combo.get_text ();
 	plugin->remove_preset (name);
 	Plugin::PresetRecord const r = plugin->save_preset (name);
 	if (!r.uri.empty ()) {
 		plugin->load_preset (r);
 	}
-#else
-	if (!seen_saving_message) {
-		seen_saving_message = true;
-		show_no_plugin_message();
-	}
-#endif
 }
 
 void
 PlugUIBase::delete_plugin_setting ()
 {
-#ifndef NO_PLUGIN_STATE
 	plugin->remove_preset (_preset_combo.get_text ());
-#else
-	if (!seen_saving_message) {
-		seen_saving_message = true;
-		show_no_plugin_message();
-	}
-#endif
 }
 
 void
@@ -712,6 +694,40 @@ void
 PlugUIBase::reset_plugin_parameters ()
 {
 	insert->reset_parameters_to_default ();
+}
+
+bool
+PlugUIBase::has_descriptive_presets () const
+{
+	std::vector<Plugin::PresetRecord> presets = insert->plugin()->get_presets();
+	for (std::vector<Plugin::PresetRecord>::const_iterator i = presets.begin(); i != presets.end(); ++i) {
+		if (i->valid && !i->description.empty()) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void
+PlugUIBase::browse_presets ()
+{
+	if (!preset_dialog) {
+		if (preset_gui) {
+			/* Do not allow custom window, if preset_gui is used.
+			 * e.g. generic-plugin UI.
+			 */
+			return;
+		}
+		preset_dialog = new ArdourWindow (_("Select Preset"));
+		preset_dialog->set_keep_above (true);
+		Window* win = dynamic_cast<Window*> (preset_browser_button.get_toplevel ());
+		if (win) {
+			preset_dialog->set_transient_for (*win);
+		}
+		preset_gui = new PluginPresetsUI (insert);
+		preset_dialog->add (*preset_gui);
+	}
+	preset_dialog->show_all ();
 }
 
 void

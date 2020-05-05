@@ -1,21 +1,26 @@
 /*
-    Copyright (C) 2000 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2007 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2005-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2007-2009 David Robillard <d@drobilla.net>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2014-2018 Ben Loftis <ben@harrisonconsoles.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_mixer_ui_h__
 #define __ardour_mixer_ui_h__
@@ -62,6 +67,7 @@ namespace ARDOUR {
 };
 
 class AxisView;
+class FoldbackStrip;
 class MixerStrip;
 class PluginSelector;
 class MixerGroupTabs;
@@ -121,6 +127,7 @@ public:
 	void do_vca_unassign (boost::shared_ptr<ARDOUR::VCA>);
 	void show_spill (boost::shared_ptr<ARDOUR::Stripable>);
 	bool showing_spill_for (boost::shared_ptr<ARDOUR::Stripable>) const;
+	void fan_out (boost::weak_ptr<ARDOUR::Route>, bool to_busses, bool group);
 
 	sigc::signal1<void,boost::shared_ptr<ARDOUR::Stripable> > show_spill_change;
 
@@ -139,13 +146,20 @@ public:
 	void toggle_monitor_section ();
 	void showhide_monitor_section (bool);
 
+	void toggle_foldback_strip ();
+	void showhide_foldback_strip (bool);
+
 	void toggle_vcas ();
 	void showhide_vcas (bool on);
-	
+
 #ifdef MIXBUS
 	void toggle_mixbuses ();
 	void showhide_mixbusses (bool on);
 #endif
+
+	bool screenshot (std::string const&);
+
+	void toggle_monitor_action (ARDOUR::MonitorChoice monitor_choice, bool group_override = false, bool all = false);
 
 protected:
 	void set_axis_targets_for_operation ();
@@ -175,6 +189,7 @@ private:
 	ArdourWidgets::VPane  rhs_pane1;
 	ArdourWidgets::VPane  rhs_pane2;
 	ArdourWidgets::HPane  inner_pane;
+	Gtk::VBox             strip_group_box;
 	Gtk::HBox             strip_packer;
 	Gtk::ScrolledWindow   vca_scroller;
 	Gtk::HBox             vca_hpacker;
@@ -210,7 +225,7 @@ private:
 
 	void add_routes (ARDOUR::RouteList&);
 	void remove_strip (MixerStrip *);
-
+	void remove_foldback (FoldbackStrip *);
 	void add_masters (ARDOUR::VCAList&);
 	void remove_master (VCAMasterStrip*);
 	void new_masters_created ();
@@ -232,7 +247,7 @@ private:
 	void track_name_changed (MixerStrip *);
 
 	void redisplay_track_list ();
-	void spill_redisplay (boost::shared_ptr<ARDOUR::VCA>);
+	void spill_redisplay (boost::shared_ptr<ARDOUR::Stripable>);
 	bool no_track_list_redisplay;
 	bool track_display_button_press (GdkEventButton*);
 	void strip_width_changed ();
@@ -295,6 +310,8 @@ private:
 
 	MonitorSection   _monitor_section;
 	PluginSelector *_plugin_selector;
+	FoldbackStrip * foldback_strip;
+	bool _show_foldback_strip;
 
 	void stripable_property_changed (const PBD::PropertyChange& what_changed, boost::weak_ptr<ARDOUR::Stripable> ws);
 	void route_group_property_changed (ARDOUR::RouteGroup *, const PBD::PropertyChange &);
@@ -413,6 +430,9 @@ private:
 
 	RouteProcessorSelection _selection;
 	AxisViewSelection _axis_targets;
+
+	void spill_nothing ();
+	PBD::ScopedConnection _spill_gone_connection;
 
 	void vca_assign (boost::shared_ptr<ARDOUR::VCA>);
 	void vca_unassign (boost::shared_ptr<ARDOUR::VCA>);

@@ -97,6 +97,8 @@ This mode provides many different operations on both regions and control points,
 
 %midi Global Global MIDI commands
 
+%notes MIDI Note Editing
+
 ;; END GROUP DEFINITIONS
 
 ;; punctuation
@@ -162,13 +164,13 @@ This mode provides many different operations on both regions and control points,
 @edit|Editor/redo|<@PRIMARY@>r|redo
 @trans|Transport/Record|<@TERTIARY@>r|engage record
 @mmode|MouseMode/set-mouse-mode-timefx|t|timefx mode
-@gselect|Common/select-all-tracks|<@PRIMARY@>t|select all tracks
+@gselect|Common/select-all-visible-lanes|<@PRIMARY@>t|select all visible lanes
 @edit|Editor/alternate-redo|<@PRIMARY@>y|redo
 @select|Editor/select-all-between-cursors|<@PRIMARY@>u|all enclosed by edit range
 @select|Editor/select-all-within-cursors|u|all present in edit range
-@eep|Region/insert-region-from-region-list|i|insert from region list
+@eep|Region/insert-region-from-source-list|i|insert from region list
 @sess|Common/addExistingAudioFiles|<@PRIMARY@>i|import audio files
-@gselect|Common/invert-selection|<@TERTIARY@>i|invert selection
+@gselect|Common/invert-selection|<@PRIMARY@><@TERTIARY@>i|invert selection
 @edtrk|Editor/toggle-midi-input-active|<@SECONDARY@>i|toggle sel. track MIDI input
 @sess|Main/Open|<@PRIMARY@>o|open an existing session
 @sess|Main/Recent|<@PRIMARY@><@TERTIARY@>o|open a recent session
@@ -417,3 +419,47 @@ This mode provides many different operations on both regions and control points,
 @+mopsfader|foo|<@PRIMARY@><@SECONDARY@>left-drag|finest-drag control
 @+mopsfader|foo|<@PRIMARY@>left-drag|fine-drag control
 @+mopsfader|foo|left-drag|adjust
+
+;; MIDI Editing
+
+@notes|Notes/move-starts-earlier|comma|Move Note Starts Earlier
+@notes|Notes/move-starts-earlier-fine|<@SECONDARY@>comma|Move Note Starts Earlier (Fine)
+@notes|Notes/move-ends-later|period|Move Note Ends Later
+@notes|Notes/move-ends-later-fine|<@SECONDARY@>period|Move Note Ends Later (Fine)
+@notes|Notes/nudge-later|Right|Nudge Notes Later
+@notes|Notes/nudge-later-fine|<@SECONDARY@>Right|Nudge Notes Later (fine)
+@notes|Notes/nudge-earlier|Left|Nudge Notes Earlier
+@notes|Notes/nudge-earlier-fine|<@SECONDARY@>Left|Nudge Notes Earlier (fine)
+@notes|Notes/edit-channels|c|Edit Note Channels
+@notes|Notes/edit-velocities|v|Edit Note Velocities
+
+@notes|Notes/transpose-up-octave|<@SECONDARY@>Up|Transpose up (1 octave)
+@notes|Notes/transpose-down-octave|<@SECONDARY@>Down|Transpose down (1 octave)
+@notes|Notes/transpose-up-semitone|Up|Transpose up (1 semitone)
+@notes|Notes/transpose-down-semitone|Down|Transpose down (1 semitone)
+@notes|Notes/transpose-up-octave-smush|<@TERTIARY@>Up|Transpose up (1 octave) allow mushing
+@notes|Notes/transpose-down-octave-smush|<@TERTIARY@>Down|Transpose down (1 octave) allow mushing
+@notes|Notes/transpose-up-semitone-smush|<@TERTIARY@><@SECONDARY@>Up|Transpose up (1 semitone) allow mushing
+@notes|Notes/transpose-down-semitone-smush|<@TERTIARY@><@SECONDARY>Down|Transpose down (1 tone) allow mushing
+
+@notes|Notes/increase-velocity|<@PRIMARY@>Up|Increase Note Velocity (+8)
+@notes|Notes/decrease-velocity|<@PRIMARY@>Down|Increase Note Velocity (+8)
+@notes|Notes/increase-velocity-smush|<@PRIMARY@><@TERTIARY@>Up|Increase Note Velocity (+8) allow mushing
+@notes|Notes/decrease-velocity-smush|<@PRIMARY@><@TERTIARY@>Down|Increase Note Velocity (+8) allow mushing
+@notes|Notes/increase-velocity-fine|<@PRIMARY@><@SECONDARY@>Up|Increase Note Velocity (+1)
+@notes|Notes/decrease-velocity-fine|<@PRIMARY@><@SECONDARY@>Down|Increase Note Velocity (+1)
+@notes|Notes/increase-velocity-fine-smush|<@PRIMARY@><@SECONDARY@><@TERTIARY@>Up|Increase Note Velocity (+1) allow mushing
+@notes|Notes/decrease-velocity-fine-smush|<@PRIMARY@><@SECONDARY@><@TERTIARY@>Down|Increase Note Velocity (+1) allow mushing
+
+@notes|Notes/delete|Backspace|Delete Note Selection
+@notes|Notes/alt-delete|Delete|Delete Note Selection
+@notes|Notes/clear-selection|Escape|Clear selection
+
+@notes|Notes/select-next|Tab|Select next note
+@notes|Notes/select-previous|<@PRIMARY@>Tab|Select previous note
+@notes|Notes/add-select-next|<@TERTIARY@>Tab|Select next note
+@notes|Notes/add-select-previous|<@PRIMARY@><@TERTIARY@>Tab|Select previous note
+@notes|Notes/alt-add-select-next|<@TERTIARY@>ISO_Left_Tab|Select next note
+@notes|Notes/alt-add-select-previous|<@PRIMARY@><@TERTIARY@>ISO_Left_Tab|Select previous note
+
+

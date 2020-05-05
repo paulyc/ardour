@@ -1,3 +1,22 @@
+/*
+ * Copyright (C) 2010-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2017 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
 #ifndef __libgtkmm2ext_bindings_h__
 #define __libgtkmm2ext_bindings_h__
 
@@ -94,7 +113,7 @@ class LIBGTKMM2EXT_API Bindings {
 
 		std::string action_name;
 		std::string group_name; /* may be empty */
-		Glib::RefPtr<Gtk::Action> action;
+		mutable Glib::RefPtr<Gtk::Action> action;
 	};
 	typedef std::map<KeyboardKey,ActionInfo> KeybindingMap;
 
@@ -121,7 +140,7 @@ class LIBGTKMM2EXT_API Bindings {
 	void remove (MouseButton, Operation);
 	bool activate (MouseButton, Operation);
 
-	bool is_bound (KeyboardKey const&, Operation) const;
+	bool is_bound (KeyboardKey const&, Operation, std::string* path = 0) const;
 	std::string bound_name (KeyboardKey const&, Operation) const;
 	bool is_registered (Operation op, std::string const& action_name) const;
 

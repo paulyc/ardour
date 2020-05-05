@@ -1,21 +1,24 @@
 /*
-    Copyright (C) 2000-2007 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2011-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2011-2012 David Robillard <d@drobilla.net>
+ * Copyright (C) 2011-2016 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2014-2017 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015 Tim Mayberry <mojofunk@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <iostream>
 #include <iomanip>
@@ -144,8 +147,8 @@ MonoPanner::on_expose_event (GdkEventExpose*)
 	o = colors.outline;
 	f = colors.fill;
 	t = colors.text;
-	b = colors.background;
-	pf = colors.pos_fill;
+	b = _send_mode ? colors.send_bg : colors.background;
+	pf = (_send_mode && !_panner_shell->is_linked_to_route()) ? colors.send_pan : colors.pos_fill;
 	po = colors.pos_outline;
 
 	if (_panner_shell->bypassed()) {
@@ -157,9 +160,6 @@ MonoPanner::on_expose_event (GdkEventExpose*)
 		t  = 0x606060ff;
 	}
 
-	if (_send_mode) {
-		b = UIConfiguration::instance().color ("send bg");
-	}
 	/* background */
 	context->set_source_rgba (UINT_RGBA_R_FLT(b), UINT_RGBA_G_FLT(b), UINT_RGBA_B_FLT(b), UINT_RGBA_A_FLT(b));
 	context->rectangle (0, 0, width, height);
@@ -419,9 +419,8 @@ MonoPanner::on_motion_notify_event (GdkEventMotion* ev)
 	int w = get_width();
 	double delta = (ev->x - last_drag_x) / (double) w;
 
-	/* create a detent close to the center */
-
-	if (!detented && ARDOUR::Panner::equivalent (position_control->get_value(), 0.5)) {
+	/* create a detent close to the center, at approx 1/180 deg */
+	if (!detented && fabsf (position_control->get_value() - .5f) < 0.006f) {
 		detented = true;
 		/* snap to center */
 		position_control->set_value (0.5, Controllable::NoGroup);
@@ -432,10 +431,10 @@ MonoPanner::on_motion_notify_event (GdkEventMotion* ev)
 
 		/* have we pulled far enough to escape ? */
 
-		if (fabs (accumulated_delta) >= 0.025) {
-			position_control->set_value (position_control->get_value() + accumulated_delta, Controllable::NoGroup);
+		if (fabs (accumulated_delta) >= 0.048) {
+			position_control->set_value (position_control->get_value() + (accumulated_delta > 0 ? 0.006 : -0.006), Controllable::NoGroup);
 			detented = false;
-			accumulated_delta = false;
+			accumulated_delta = 0;
 		}
 	} else {
 		double pv = position_control->get_value(); // 0..1.0 ; 0 = left
@@ -486,12 +485,14 @@ MonoPanner::on_key_press_event (GdkEventKey* ev)
 void
 MonoPanner::set_colors ()
 {
-	colors.fill = UIConfiguration::instance().color_mod ("mono panner fill", "panner fill");
-	colors.outline = UIConfiguration::instance().color ("mono panner outline");
-	colors.text = UIConfiguration::instance().color ("mono panner text");
-	colors.background = UIConfiguration::instance().color ("mono panner bg");
+	colors.fill        = UIConfiguration::instance().color_mod ("mono panner fill", "panner fill");
+	colors.outline     = UIConfiguration::instance().color ("mono panner outline");
+	colors.text        = UIConfiguration::instance().color ("mono panner text");
+	colors.background  = UIConfiguration::instance().color ("mono panner bg");
 	colors.pos_outline = UIConfiguration::instance().color ("mono panner position outline");
-	colors.pos_fill = UIConfiguration::instance().color_mod ("mono panner position fill", "mono panner position fill");
+	colors.pos_fill    = UIConfiguration::instance().color_mod ("mono panner position fill", "mono panner position fill");
+	colors.send_bg     = UIConfiguration::instance().color ("send bg");
+	colors.send_pan    = UIConfiguration::instance().color ("send pan");
 }
 
 void

@@ -1,21 +1,25 @@
 /*
-    Copyright (C) 2001,2007 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2001-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2007-2015 David Robillard <d@drobilla.net>
+ * Copyright (C) 2008-2009 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2010-2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2015-2018 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015 Nick Mainsbridge <mainsbridge@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <cstdio>
 #include <errno.h>
@@ -174,7 +178,9 @@ Automatable::add_control(boost::shared_ptr<Evoral::Control> ac)
 	ControlSet::add_control (ac);
 
 	if ((!actl || !(actl->flags() & Controllable::NotAutomatable)) && al) {
-		_can_automate_list.insert (param);
+		if (!actl || !(actl->flags() & Controllable::HiddenControl)) {
+			can_automate (param);
+		}
 		automation_list_automation_state_changed (param, al->automation_state ()); // sync everything up
 	}
 }
@@ -186,10 +192,18 @@ Automatable::describe_parameter (Evoral::Parameter param)
 
 	if (param == Evoral::Parameter(GainAutomation)) {
 		return _("Fader");
+	} else if (param.type() == BusSendLevel) {
+		return _("Send");
 	} else if (param.type() == TrimAutomation) {
 		return _("Trim");
 	} else if (param.type() == MuteAutomation) {
 		return _("Mute");
+	} else if (param.type() == PanAzimuthAutomation) {
+		return _("Azimuth");
+	} else if (param.type() == PanWidthAutomation) {
+		return _("Width");
+	} else if (param.type() == PanElevationAutomation) {
+		return _("Elevation");
 	} else if (param.type() == MidiCCAutomation) {
 		return string_compose("Controller %1 [%2]", param.id(), int(param.channel()) + 1);
 	} else if (param.type() == MidiPgmChangeAutomation) {
@@ -257,8 +271,10 @@ Automatable::set_automation_xml_state (const XMLNode& node, Evoral::Parameter le
 			if (_can_automate_list.find (param) == _can_automate_list.end ()) {
 				boost::shared_ptr<AutomationControl> actl = automation_control (param);
 				if (actl && (*niter)->children().size() > 0 && Config->get_limit_n_automatables () > 0) {
-					actl->set_flags (Controllable::Flag ((int)actl->flags() & ~Controllable::NotAutomatable));
-					can_automate (param);
+					actl->clear_flag (Controllable::NotAutomatable);
+					if (!(actl->flags() & Controllable::HiddenControl) && actl->name() != X_("hidden")) {
+						can_automate (param);
+					}
 					info << "Marked parmater as automatable" << endl;
 				} else {
 					warning << "Ignored automation data for non-automatable parameter" << endl;
@@ -270,7 +286,7 @@ Automatable::set_automation_xml_state (const XMLNode& node, Evoral::Parameter le
 			boost::shared_ptr<AutomationControl> existing = automation_control (param);
 
 			if (existing) {
-				existing->alist()->set_state (**niter, 3000);
+				existing->alist()->set_state (**niter, Stateful::loading_state_version);
 			} else {
 				boost::shared_ptr<Evoral::Control> newcontrol = control_factory(param);
 				add_control (newcontrol);
@@ -350,7 +366,7 @@ Automatable::protect_automation ()
 			l->set_automation_state (Off);
 			break;
 		case Latch:
-			/* fall through */
+			/* fallthrough */
 		case Touch:
 			l->set_automation_state (Play);
 			break;
@@ -505,7 +521,7 @@ Automatable::control_factory(const Evoral::Parameter& param)
 	ParameterDescriptor               desc(param);
 	boost::shared_ptr<AutomationList> list;
 
-	if (param.type() >= MidiCCAutomation && param.type() <= MidiChannelPressureAutomation) {
+	if (parameter_is_midi (param.type())) {
 		MidiTrack* mt = dynamic_cast<MidiTrack*>(this);
 		if (mt) {
 			control = new MidiTrack::MidiControl(mt, param);
@@ -538,10 +554,12 @@ Automatable::control_factory(const Evoral::Parameter& param)
 		control = new GainControl(_a_session, param);
 	} else if (param.type() == TrimAutomation) {
 		control = new GainControl(_a_session, param);
+	} else if (param.type() == BusSendLevel) {
+		control = new GainControl(_a_session, param);
 	} else if (param.type() == PanAzimuthAutomation || param.type() == PanWidthAutomation || param.type() == PanElevationAutomation) {
 		Pannable* pannable = dynamic_cast<Pannable*>(this);
 		if (pannable) {
-			control = new PanControllable (_a_session, pannable->describe_parameter (param), pannable, param);
+			control = new PanControllable (_a_session, describe_parameter (param), pannable, param);
 		} else {
 			warning << "PanAutomation for non-Pannable" << endl;
 		}
@@ -616,13 +634,17 @@ Automatable::clear_controls ()
 bool
 Automatable::find_next_event (double start, double end, Evoral::ControlEvent& next_event, bool only_active) const
 {
-	next_event.when = std::numeric_limits<double>::max();
+	next_event.when = start <= end ? std::numeric_limits<double>::max() : 0;
 
 	if (only_active) {
 		boost::shared_ptr<ControlList> cl = _automated_controls.reader ();
 		for (ControlList::const_iterator ci = cl->begin(); ci != cl->end(); ++ci) {
 			if ((*ci)->automation_playback()) {
-				find_next_ac_event (*ci, start, end, next_event);
+				if (start <= end) {
+					find_next_ac_event (*ci, start, end, next_event);
+				} else {
+					find_prev_ac_event (*ci, start, end, next_event);
+				}
 			}
 		}
 	} else {
@@ -630,16 +652,22 @@ Automatable::find_next_event (double start, double end, Evoral::ControlEvent& ne
 			boost::shared_ptr<AutomationControl> c
 				= boost::dynamic_pointer_cast<AutomationControl>(li->second);
 			if (c) {
-				find_next_ac_event (c, start, end, next_event);
+				if (start <= end) {
+					find_next_ac_event (c, start, end, next_event);
+				} else {
+					find_prev_ac_event (c, start, end, next_event);
+				}
 			}
 		}
 	}
-	return next_event.when != std::numeric_limits<double>::max();
+	return next_event.when != (start <= end ? std::numeric_limits<double>::max() : 0);
 }
 
 void
 Automatable::find_next_ac_event (boost::shared_ptr<AutomationControl> c, double start, double end, Evoral::ControlEvent& next_event) const
 {
+	assert (start <= end);
+
 	boost::shared_ptr<SlavableAutomationControl> sc
 		= boost::dynamic_pointer_cast<SlavableAutomationControl>(c);
 
@@ -647,22 +675,44 @@ Automatable::find_next_ac_event (boost::shared_ptr<AutomationControl> c, double 
 		sc->find_next_event (start, end, next_event);
 	}
 
-	Evoral::ControlList::const_iterator i;
 	boost::shared_ptr<const Evoral::ControlList> alist (c->list());
 	Evoral::ControlEvent cp (start, 0.0f);
 	if (!alist) {
 		return;
 	}
 
-	for (i = lower_bound (alist->begin(), alist->end(), &cp, Evoral::ControlList::time_comparator); i != alist->end() && (*i)->when < end; ++i) {
-		if ((*i)->when > start) {
-			break;
-		}
-	}
+	Evoral::ControlList::const_iterator i = upper_bound (alist->begin(), alist->end(), &cp, Evoral::ControlList::time_comparator);
 
 	if (i != alist->end() && (*i)->when < end) {
 		if ((*i)->when < next_event.when) {
 			next_event.when = (*i)->when;
 		}
+	}
+}
+
+void
+Automatable::find_prev_ac_event (boost::shared_ptr<AutomationControl> c, double start, double end, Evoral::ControlEvent& next_event) const
+{
+	assert (start > end);
+	boost::shared_ptr<SlavableAutomationControl> sc
+		= boost::dynamic_pointer_cast<SlavableAutomationControl>(c);
+
+	if (sc) {
+		sc->find_next_event (start, end, next_event);
+	}
+
+	boost::shared_ptr<const Evoral::ControlList> alist (c->list());
+	if (!alist) {
+		return;
+	}
+
+	Evoral::ControlEvent cp (end, 0.0f);
+	Evoral::ControlList::const_iterator i = upper_bound (alist->begin(), alist->end(), &cp, Evoral::ControlList::time_comparator);
+
+	while (i != alist->end() && (*i)->when < start) {
+		if ((*i)->when > next_event.when) {
+			next_event.when = (*i)->when;
+		}
+		++i;
 	}
 }

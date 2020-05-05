@@ -1,21 +1,22 @@
 /*
-    Copyright (C) 2013 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2013-2015 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2013-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2014-2018 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <string>
 #include <list>
@@ -28,6 +29,7 @@
 #include "pbd/error.h"
 
 #include "ardour/audioengine.h"
+#include "ardour/debug.h"
 #include "ardour/session.h"
 #include "ardour/types.h"
 
@@ -62,6 +64,7 @@ JACKAudioBackend::JACKAudioBackend (AudioEngine& e, AudioBackendInfo& info, boos
 	, _target_systemic_output_latency (0)
 	, _current_sample_rate (0)
 	, _current_buffer_size (0)
+	, _jack_ports (new JackPorts)
 	, _session (0)
 {
 	_jack_connection->Connected.connect_same_thread (jack_connection_connection, boost::bind (&JACKAudioBackend::when_connected_to_jack, this));
@@ -70,6 +73,13 @@ JACKAudioBackend::JACKAudioBackend (AudioEngine& e, AudioBackendInfo& info, boos
 
 JACKAudioBackend::~JACKAudioBackend()
 {
+	{
+		RCUWriter<JackPorts> writer (_jack_ports);
+		boost::shared_ptr<JackPorts> jp = writer.get_copy ();
+		jp->clear ();
+	}
+
+	_jack_ports.flush ();
 }
 
 string
@@ -205,7 +215,7 @@ JACKAudioBackend::available_buffer_sizes (const string& device) const
 }
 
 std::vector<uint32_t>
-JACKAudioBackend::available_period_sizes (const std::string& driver) const
+JACKAudioBackend::available_period_sizes (const std::string& driver, const std::string&) const
 {
 	vector<uint32_t> s;
 	if (ARDOUR::get_jack_audio_driver_supports_setting_period_count (driver)) {
@@ -1084,7 +1094,8 @@ JACKAudioBackend::n_physical (unsigned long flags) const
 	if (ports) {
 		for (uint32_t i = 0; ports[i]; ++i) {
 			if (!strstr (ports[i], "Midi-Through")) {
-				DataType t = port_data_type (jack_port_by_name (_priv_jack, ports[i]));
+				boost::shared_ptr<JackPort> jp (new JackPort (jack_port_by_name (_priv_jack, ports[i])));
+				DataType t = port_data_type (jp);
 				if (t != DataType::NIL) {
 					c.set (t, c.get (t) + 1);
 				}
@@ -1211,6 +1222,9 @@ JACKAudioBackend::speed_and_position (double& speed, samplepos_t& position)
 	}
 
 	position = pos.frame;
+
+	DEBUG_TRACE (DEBUG::Slave, string_compose ("JACK transport: speed %1 position %2 starting %3\n", speed, position, starting));
+
 	return starting;
 }
 

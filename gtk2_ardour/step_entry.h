@@ -1,21 +1,21 @@
 /*
-    Copyright (C) 2010 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2010-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2011-2015 David Robillard <d@drobilla.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __gtk2_ardour_step_entry_h__
 #define __gtk2_ardour_step_entry_h__
@@ -28,7 +28,7 @@
 #include <gtkmm2ext/bindings.h>
 
 #include "ardour_window.h"
-#include "gtk_pianokeyboard.h"
+#include "pianokeyboard.h"
 
 class StepEditor;
 
@@ -51,9 +51,6 @@ class StepEntry : public ArdourWindow
 
 	void set_step_editor (StepEditor*);
 
-	void note_off_event_handler (int note);
-	void rest_event_handler ();
-
 	Temporal::Beats note_length();
 	uint8_t note_velocity() const;
 	uint8_t note_channel() const;
@@ -65,6 +62,9 @@ class StepEntry : public ArdourWindow
   private:
 	static StepEntry* _instance;
 	StepEntry ();
+
+	void note_off_event_handler (int note);
+	void rest_event_handler ();
 
 	Temporal::Beats _current_note_length;
 	uint8_t _current_note_velocity;
@@ -140,8 +140,8 @@ class StepEntry : public ArdourWindow
 	void velocity_value_change ();
 	void length_value_change ();
 
-	PianoKeyboard* _piano;
-	Gtk::Widget* piano;
+	APianoKeyboard _piano;
+
 	StepEditor*   se;
 
 	void bank_click ();

@@ -1,22 +1,22 @@
 /*
-    Copyright (C) 2012 Paul Davis
-    Witten by 2012 Robin Gareus <robin@gareus.org>
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2012-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2012-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013-2018 John Emmas <john@creativepost.co.uk>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 #include <iostream>
 #include <errno.h>
 #include <sys/types.h>
@@ -64,12 +64,6 @@ LTC_TransportMaster::LTC_TransportMaster (std::string const & name)
 	, a3e_timecode (Timecode::timecode_24)
 	, samples_per_timecode_frame (0)
 {
-	if ((_port = AudioEngine::instance()->register_input_port (DataType::AUDIO, string_compose ("%1 in", _name))) == 0) {
-		throw failed_constructor();
-	}
-
-	DEBUG_TRACE (DEBUG::Slave, string_compose ("LTC registered %1\n", _port->name()));
-
 	memset (&prev_frame, 0, sizeof(LTCFrameExt));
 
 	resync_latency();
@@ -82,6 +76,14 @@ void
 LTC_TransportMaster::init ()
 {
 	reset (true);
+}
+
+void
+LTC_TransportMaster::create_port ()
+{
+	if ((_port = AudioEngine::instance()->register_input_port (DataType::AUDIO, string_compose ("%1 in", _name), false, TransportMasterPort)) == 0) {
+		throw failed_constructor();
+	}
 }
 
 void
@@ -655,16 +657,22 @@ LTC_TransportMaster::position_string() const
 std::string
 LTC_TransportMaster::delta_string() const
 {
-	char delta[80];
+	char delta[128];
 
 	if (!_collect || current.timestamp == 0) {
 		snprintf (delta, sizeof(delta), "\u2012\u2012\u2012\u2012");
 	} else if ((monotonic_cnt - current.timestamp) > 2 * samples_per_ltc_frame) {
 		snprintf (delta, sizeof(delta), "%s", _("flywheel"));
 	} else {
-		snprintf (delta, sizeof(delta), "<span foreground=\"%s\" face=\"monospace\" >%s%s%lld</span>sm",
-				sync_lock_broken ? "red" : "white",
-				LEADINGZERO(::llabs(_current_delta)), PLUSMINUS(-_current_delta), ::llabs(_current_delta));
+		if (abs (_current_delta) > _session->sample_rate()) {
+			int secs = rint ((double) _current_delta / _session->sample_rate());
+			snprintf(delta, sizeof(delta), "\u0394<span foreground=\"green\" face=\"monospace\" >%s%s%d</span><span face=\"monospace\"> s</span>",
+			         LEADINGZERO(abs(secs)), PLUSMINUS(-secs), abs(secs));
+		} else {
+			snprintf (delta, sizeof(delta), "<span foreground=\"%s\" face=\"monospace\" >%s%s%lld</span><span face=\"monospace\">sm</span>",
+			          sync_lock_broken ? "red" : "white",
+			          LEADINGZERO(::llabs(_current_delta)), PLUSMINUS(-_current_delta), ::llabs(_current_delta));
+		}
 	}
 
 	return delta;

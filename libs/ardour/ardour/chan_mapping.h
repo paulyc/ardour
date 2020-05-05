@@ -1,21 +1,21 @@
 /*
-    Copyright (C) 2009 Paul Davis
-    Author: David Robillard
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2009-2011 David Robillard <d@drobilla.net>
+ * Copyright (C) 2016 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_chan_mapping_h__
 #define __ardour_chan_mapping_h__
@@ -25,12 +25,13 @@
 #include <ostream>
 #include <utility>
 
+#include "pbd/stack_allocator.h"
 #include "pbd/xml++.h"
+
 #include "ardour/data_type.h"
 #include "ardour/chan_count.h"
 
 namespace ARDOUR {
-
 
 /** A mapping from one set of channels to another.
  * The general form is  1 source (from), many sinks (to).
@@ -45,6 +46,8 @@ public:
 	ChanMapping(const ChanMapping&);
 	ChanMapping(const XMLNode& node);
 
+	ChanMapping operator=(const ChanMapping&);
+
 	uint32_t get(DataType t, uint32_t from, bool* valid) const;
 
 	/** reverse lookup
@@ -53,29 +56,30 @@ public:
 	 * @param valid pointer to a boolean. If not NULL it is set to true if the mapping is found, and false otherwise.
 	 * @returns first "from" that matches given "to"
 	 */
-	uint32_t get_src(DataType t, uint32_t to, bool* valid) const;
+	uint32_t get_src(DataType type, uint32_t to, bool* valid) const;
 
 	/** get buffer mapping for given data type and pin
 	 * @param type data type
 	 * @param from numeric source id
 	 * @returns mapped buffer number (or ChanMapping::Invalid)
 	 */
-	uint32_t get (DataType t, uint32_t from) const { return get (t, from, NULL); }
+	uint32_t get (DataType type, uint32_t from) const { return get (type, from, NULL); }
 
 	/** set buffer mapping for given data type
 	 * @param type data type
 	 * @param from numeric source id
 	 * @param to buffer
 	 */
-	void     set(DataType t, uint32_t from, uint32_t to);
-	void     offset_from(DataType t, int32_t delta);
-	void     offset_to(DataType t, int32_t delta);
+	void     set (DataType type, uint32_t from, uint32_t to);
+
+	void     offset_from (DataType t, int32_t delta);
+	void     offset_to (DataType t, int32_t delta);
 
 	/** remove mapping
 	 * @param type data type
 	 * @param from numeric source to remove from mapping
 	 */
-	void     unset(DataType t, uint32_t from);
+	void     unset(DataType type, uint32_t from);
 
 	/** Test mapping matrix for identity
 	 * @param offset per data-type offset to take into account
@@ -100,11 +104,22 @@ public:
 	 */
 	bool     is_subset (const ChanMapping& superset) const;
 
+#if defined(_MSC_VER) && (_MSC_VER < 1900)
+	/* Use the older (heap based) mapping for early versions of MSVC.
+	 * In fact it might be safer to use this for all MSVC builds - as
+	 * our StackAllocator class depends on 'boost::aligned_storage'
+	 * which is known to be troublesome with Visual C++ :-
+	 * https://www.boost.org/doc/libs/1_65_0/libs/type_traits/doc/html/boost_typetraits/reference/aligned_storage.html
+	 */
 	typedef std::map<uint32_t, uint32_t>    TypeMapping;
 	typedef std::map<DataType, TypeMapping> Mappings;
+#else
+	typedef std::map<uint32_t, uint32_t, std::less<uint32_t>, PBD::StackAllocator<std::pair<const uint32_t, uint32_t>, 16> > TypeMapping;
+	typedef std::map<DataType, TypeMapping, std::less<DataType>, PBD::StackAllocator<std::pair<const DataType, TypeMapping>, 2> > Mappings;
+#endif
 
-	Mappings       mappings()       { return _mappings; }
-	const Mappings mappings() const { return _mappings; }
+	Mappings        mappings()       { return _mappings; }
+	const Mappings& mappings() const { return _mappings; }
 
 	bool operator==(const ChanMapping& other) const {
 		return (_mappings == other._mappings);

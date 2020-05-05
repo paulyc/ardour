@@ -1,21 +1,28 @@
 /*
-    Copyright (C) 2002 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2016 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2008-2010 Sakari Bergen <sakari.bergen@beatwaves.net>
+ * Copyright (C) 2008 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2012-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013-2014 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2013-2015 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2015 GZharun <grygoriiz@wavesglobal.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <unistd.h>
 #include <cerrno>
@@ -85,14 +92,12 @@ AudioEngine::AudioEngine ()
 	, _mtdm (0)
 	, _mididm (0)
 	, _measuring_latency (MeasureNone)
-	, _latency_input_port (0)
-	, _latency_output_port (0)
 	, _latency_flush_samples (0)
 	, _latency_signal_latency (0)
 	, _stopped_for_latency (false)
 	, _started_for_latency (false)
 	, _in_destructor (false)
-	, _last_backend_error_string(AudioBackend::get_error_string((AudioBackend::ErrorCode)-1))
+	, _last_backend_error_string(AudioBackend::get_error_string(AudioBackend::NoError))
 	, _hw_reset_event_thread(0)
 	, _hw_reset_request_count(0)
 	, _stop_hw_reset_processing(0)
@@ -135,15 +140,41 @@ AudioEngine::create ()
 }
 
 void
-AudioEngine::split_cycle (pframes_t offset)
+AudioEngine::split_cycle (pframes_t nframes)
 {
 	/* caller must hold process lock */
 
-	Port::increment_global_port_buffer_offset (offset);
+	boost::shared_ptr<Ports> p = ports.reader();
+
+	/* This is mainly for the benefit of rt-control ports (MTC, MClk)
+	 *
+	 * Normally ports are flushed by the route:
+	 *   ARDOUR::MidiPort::flush_buffers(unsigned int)
+	 *   ARDOUR::Delivery::flush_buffers(long)
+	 *   ARDOUR::Route::flush_processor_buffers_locked(long)
+	 *   ARDOUR::Route::run_route(long, long, unsigned int, bool, bool)
+	 *   ...
+	 *
+	 * This is required so that route -> route connections work during
+	 * normal processing.
+	 *
+	 * However some non-route ports may contain MIDI events
+	 * from current Port::port_offset() .. Port::port_offset() + nframes.
+	 * If those events are not pushed to ports before the cycle split,
+	 * MidiPort::flush_buffers will drop them (event time is out of bounds).
+	 *
+	 * TODO: for optimized builds MidiPort::flush_buffers() could
+	 * be relaxed, ignore ev->time() checks, and simply send
+	 * all events as-is.
+	 */
+	for (Ports::iterator i = p->begin(); i != p->end(); ++i) {
+		i->second->flush_buffers (nframes);
+	}
+
+	Port::increment_global_port_buffer_offset (nframes);
 
 	/* tell all Ports that we're going to start a new (split) cycle */
 
-	boost::shared_ptr<Ports> p = ports.reader();
 
 	for (Ports::iterator i = p->begin(); i != p->end(); ++i) {
 		i->second->cycle_split ();
@@ -174,6 +205,8 @@ AudioEngine::sample_rate_change (pframes_t nframes)
 int
 AudioEngine::buffer_size_change (pframes_t bufsiz)
 {
+	set_port_buffer_sizes (bufsiz);
+
 	if (_session) {
 		_session->set_block_size (bufsiz);
 		last_monitor_check = 0;
@@ -253,9 +286,12 @@ AudioEngine::process_callback (pframes_t nframes)
 		--_init_countdown;
 		/* Warm up caches */
 		PortManager::cycle_start (nframes);
-		PortManager::silence (nframes);
 		_session->process (nframes);
+		PortManager::silence (nframes);
 		PortManager::cycle_end (nframes);
+		if (_init_countdown == 0) {
+			_session->reset_xrun_count();
+		}
 		return 0;
 	}
 
@@ -349,6 +385,7 @@ AudioEngine::process_callback (pframes_t nframes)
 			*/
 
 			if (session_removal_countdown <= nframes) {
+				assert (_session);
 				_session->midi_panic ();
 			}
 
@@ -385,9 +422,35 @@ AudioEngine::process_callback (pframes_t nframes)
 	}
 
 	if (!_freewheeling || Freewheel.empty()) {
-		const double engine_speed = tmm.pre_process_transport_masters (nframes, sample_time_at_cycle_start());
-		Port::set_speed_ratio (engine_speed);
-		DEBUG_TRACE (DEBUG::Slave, string_compose ("transport master (current=%1) gives speed %2 (ports using %3)\n", tmm.current() ? tmm.current()->name() : string("[]"), engine_speed, Port::speed_ratio()));
+		/* catch_speed is the speed that we estimate we need to run at
+		   to catch (or remain locked to) a transport master.
+		*/
+		double catch_speed = tmm.pre_process_transport_masters (nframes, sample_time_at_cycle_start());
+		catch_speed = _session->plan_master_strategy (nframes, tmm.get_current_speed_in_process_context(), tmm.get_current_position_in_process_context(), catch_speed);
+		Port::set_speed_ratio (catch_speed);
+		DEBUG_TRACE (DEBUG::Slave, string_compose ("transport master (current=%1) gives speed %2 (ports using %3)\n", tmm.current() ? tmm.current()->name() : string("[]"), catch_speed, Port::speed_ratio()));
+
+#if 0 // USE FOR DEBUG ONLY
+		/* use with Dummy backend, engine pulse and
+		 * scripts/_find_nonzero_sample.lua
+		 * to correlate with recorded region alignment.
+		 */
+		static bool was_rolling = false;
+		bool is_rolling = _session->transport_rolling();
+		if (!was_rolling && is_rolling) {
+			samplepos_t stacs = sample_time_at_cycle_start ();
+			samplecnt_t sr = sample_rate ();
+			samplepos_t tp = _session->transport_sample ();
+			/* Note: this does not take Port latency into account:
+			 * - always add 12 samples (Port::_resampler_quality)
+			 * - ExistingMaterial: subtract playback latency from engine-pulse
+			 *   We assume the player listens and plays along. Recorded region is moved
+			 *   back by playback_latency
+			 */
+			printf (" ******** Starting play at %ld, next pulse: %ld\n", stacs, ((sr - (stacs % sr)) %sr) + tp);
+		}
+		was_rolling = is_rolling;
+#endif
 	}
 
 	/* tell all relevant objects that we're starting a new cycle */
@@ -411,11 +474,18 @@ AudioEngine::process_callback (pframes_t nframes)
 		} else {
 			pframes_t remain = Port::cycle_nframes ();
 			while (remain > 0) {
+				/* keep track of split_cycle() calls by Session::process */
+				samplecnt_t poff = Port::port_offset ();
 				pframes_t nf = std::min (remain, nframes);
 				_session->process (nf);
 				remain -= nf;
 				if (remain > 0) {
-					split_cycle (nf);
+					/* calculate split-cycle offset */
+					samplecnt_t delta = Port::port_offset () - poff;
+					assert (delta >= 0 && delta <= nf);
+					if (nf > delta) {
+						split_cycle (nf - delta);
+					}
 				}
 			}
 		}
@@ -526,6 +596,7 @@ void
 AudioEngine::do_reset_backend()
 {
 	SessionEvent::create_per_thread_pool (X_("Backend reset processing thread"), 1024);
+	pthread_set_name ("EngineWatchdog");
 
 	Glib::Threads::Mutex::Lock guard (_reset_request_lock);
 
@@ -586,6 +657,7 @@ void
 AudioEngine::do_devicelist_update()
 {
 	SessionEvent::create_per_thread_pool (X_("Device list update processing thread"), 512);
+	pthread_set_name ("DeviceList");
 
 	Glib::Threads::Mutex::Lock guard (_devicelist_update_lock);
 
@@ -654,7 +726,7 @@ AudioEngine::set_session (Session *s)
 	SessionHandlePtr::set_session (s);
 
 	if (_session) {
-		_init_countdown = 8;
+		_init_countdown = std::max (4, (int)(_backend->sample_rate () / _backend->buffer_size ()) / 8);
 	}
 }
 
@@ -678,18 +750,6 @@ AudioEngine::remove_session ()
 
 	remove_all_ports ();
 }
-
-
-void
-AudioEngine::reconnect_session_routes (bool reconnect_inputs, bool reconnect_outputs)
-{
-#ifdef USE_TRACKS_CODE_FEATURES
-	if (_session) {
-		_session->reconnect_existing_routes(true, true, reconnect_inputs, reconnect_outputs);
-	}
-#endif
-}
-
 
 void
 AudioEngine::died ()
@@ -844,23 +904,23 @@ void
 AudioEngine::drop_backend ()
 {
 	if (_backend) {
+		/* see also ::stop() */
 		_backend->stop ();
-		// Stopped is needed for Graph to explicitly terminate threads
+		_running = false;
+		if (_session && !_session->loading() && !_session->deletion_in_progress()) {
+			// it's not a halt, but should be handled the same way:
+			// disable record, stop transport and I/O processign but save the data.
+			_session->engine_halted ();
+		}
+		Port::PortDrop (); /* EMIT SIGNAL */
+		TransportMasterManager& tmm (TransportMasterManager::instance());
+		tmm.engine_stopped ();
+
+		/* Stopped is needed for Graph to explicitly terminate threads */
 		Stopped (); /* EMIT SIGNAL */
 		_backend->drop_device ();
 		_backend.reset ();
-		_running = false;
 	}
-}
-
-boost::shared_ptr<AudioBackend>
-AudioEngine::set_default_backend ()
-{
-	if (_backends.empty()) {
-		return boost::shared_ptr<AudioBackend>();
-	}
-
-	return set_backend (_backends.begin()->first, "", "");
 }
 
 boost::shared_ptr<AudioBackend>
@@ -896,6 +956,10 @@ AudioEngine::start (bool for_latency)
 {
 	if (!_backend) {
 		return -1;
+	}
+
+	if (_running && _backend->can_change_systemic_latency_when_running()) {
+		_started_for_latency = for_latency;
 	}
 
 	if (_running) {
@@ -963,7 +1027,7 @@ AudioEngine::stop (bool for_latency)
 
 	if (for_latency && _backend->can_change_systemic_latency_when_running()) {
 		stop_engine = false;
-		if (_running) {
+		if (_running && _started_for_latency) {
 			_backend->start (false); // keep running, reload latencies
 		}
 	} else {
@@ -1000,8 +1064,8 @@ AudioEngine::stop (bool for_latency)
 	}
 	_processed_samples = 0;
 	_measuring_latency = MeasureNone;
-	_latency_output_port = 0;
-	_latency_input_port = 0;
+	_latency_output_port.reset ();
+	_latency_input_port.reset ();
 
 	if (stop_engine) {
 		Port::PortDrop ();
@@ -1307,6 +1371,7 @@ AudioEngine::thread_init_callback (void* arg)
 int
 AudioEngine::sync_callback (TransportState state, samplepos_t position)
 {
+	DEBUG_TRACE (DEBUG::BackendCallbacks, string_compose (X_("sync callback %1, %2\n"), state, position));
 	if (_session) {
 		return _session->backend_sync_callback (state, position);
 	}
@@ -1316,12 +1381,14 @@ AudioEngine::sync_callback (TransportState state, samplepos_t position)
 void
 AudioEngine::freewheel_callback (bool onoff)
 {
+	DEBUG_TRACE (DEBUG::BackendCallbacks, string_compose (X_("freewheel callback onoff %1\n"), onoff));
 	_freewheeling = onoff;
 }
 
 void
 AudioEngine::latency_callback (bool for_playback)
 {
+	DEBUG_TRACE (DEBUG::BackendCallbacks, string_compose (X_("latency callback playback ? %1\n"), for_playback));
 	if (_session) {
 		_session->update_latency (for_playback);
 	}
@@ -1338,6 +1405,7 @@ AudioEngine::update_latencies ()
 void
 AudioEngine::halted_callback (const char* why)
 {
+	DEBUG_TRACE (DEBUG::BackendCallbacks, string_compose (X_("halted callback why: [%1]\n"), why));
 	if (_in_destructor) {
 		/* everything is under control */
 		return;
@@ -1503,11 +1571,11 @@ AudioEngine::stop_latency_detection ()
 
 	if (_latency_output_port) {
 		port_engine().unregister_port (_latency_output_port);
-		_latency_output_port = 0;
+		_latency_output_port.reset();
 	}
 	if (_latency_input_port) {
 		port_engine().unregister_port (_latency_input_port);
-		_latency_input_port = 0;
+		_latency_input_port.reset();
 	}
 
 	if (_running && _backend->can_change_systemic_latency_when_running()) {

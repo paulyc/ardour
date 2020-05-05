@@ -1,21 +1,23 @@
 /*
-    Copyright (C) 2000,2007 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2000-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2007-2012 David Robillard <d@drobilla.net>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <string>
 
@@ -40,7 +42,7 @@ string
 PortInsert::name_and_id_new_insert (Session& s, uint32_t& bitslot)
 {
 	bitslot = s.next_insert_id ();
-	return string_compose (_("insert %1"), bitslot+ 1);
+	return string_compose (_("insert %1"), bitslot);
 }
 
 PortInsert::PortInsert (Session& s, boost::shared_ptr<Pannable> pannable, boost::shared_ptr<MuteMaster> mm)
@@ -233,7 +235,9 @@ PortInsert::signal_latency() const
 	 */
 
 	if (_measured_latency == 0) {
-		return _session.engine().samples_per_cycle() + _input->effective_latency ();
+		return _session.engine().samples_per_cycle()
+		       + _input->connected_latency (false)
+		       + _output->connected_latency (true);
 	} else {
 		return _measured_latency;
 	}
@@ -268,13 +272,15 @@ PortInsert::can_support_io_configuration (const ChanCount& in, ChanCount& out)
 }
 
 bool
-PortInsert::set_name (const std::string& name)
+PortInsert::set_name (const std::string& new_name)
 {
-	bool ret = Processor::set_name (name);
+	string unique_name = validate_name (new_name, string_compose (_("insert %1"), _bitslot));
 
-	ret = (ret && _input->set_name (name) && _output->set_name (name));
+	if (unique_name.empty ()) {
+		return false;
+	}
 
-	return ret;
+	return IOProcessor::set_name (unique_name);
 }
 
 void

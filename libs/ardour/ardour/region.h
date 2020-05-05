@@ -1,21 +1,25 @@
 /*
-    Copyright (C) 2000-2001 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2000-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2018 Ben Loftis <ben@harrisonconsoles.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_region_h__
 #define __ardour_region_h__
@@ -67,6 +71,8 @@ namespace Properties {
 	LIBARDOUR_API extern PBD::PropertyDescriptor<float>             shift;
 	LIBARDOUR_API extern PBD::PropertyDescriptor<PositionLockStyle> position_lock_style;
 	LIBARDOUR_API extern PBD::PropertyDescriptor<uint64_t>          layering_index;
+	LIBARDOUR_API extern PBD::PropertyDescriptor<std::string>	tags;
+	LIBARDOUR_API extern PBD::PropertyDescriptor<bool>		contents; // type doesn't matter here
 };
 
 class Playlist;
@@ -282,6 +288,17 @@ public:
 	virtual boost::shared_ptr<const Evoral::Control>
 	control (const Evoral::Parameter& id) const = 0;
 
+	/* tags */
+
+	std::string tags()    const { return _tags; }
+	virtual bool set_tags (const std::string& str) {
+		if (_tags != str) {
+			_tags = str;
+			PropertyChanged (PBD::PropertyChange (Properties::tags));
+		}
+		return true;
+	}
+
 	/* serialization */
 
 	XMLNode&         get_state ();
@@ -451,6 +468,8 @@ private:
 	PBD::Property<float>       _shift;
 	PBD::EnumProperty<PositionLockStyle> _position_lock_style;
 	PBD::Property<uint64_t>    _layering_index;
+	PBD::Property<std::string> _tags;
+	PBD::Property<bool>        _contents; // type is irrelevant
 
 	samplecnt_t             _last_length;
 	samplepos_t             _last_position;

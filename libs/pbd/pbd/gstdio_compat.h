@@ -1,3 +1,21 @@
+/*
+ * Copyright (C) 2015-2017 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
 /* glib mingw64/win32 compatibility
  *
  * see http://pidgin.im/pipermail/devel/2014-April/023475.html
@@ -31,8 +49,10 @@ pbd_g_stat(const gchar *filename, GStatBufW32 *buf)
  * while the windows API is
  *   int _wstat(const wchar_t*, struct _stat*)
  * note that  struct _stat != struct stat;
+ *
+ * This has been fixed with sometime between 2.42.0 and 2.64.1
  */
-#if defined(_WIN32) && !defined(_MSC_VER) && defined(_WIN64)
+#if defined(_WIN32) && !defined(_MSC_VER) && defined(_WIN64) && !GLIB_CHECK_VERSION (2,64,1)
 #include <windows.h>
 #include <errno.h>
 #include <wchar.h>

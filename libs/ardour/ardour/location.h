@@ -1,20 +1,26 @@
 /*
-    Copyright (C) 2000 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2006-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006 Hans Fugal <hans@fugal.net>
+ * Copyright (C) 2008-2011 David Robillard <d@drobilla.net>
+ * Copyright (C) 2008 Sakari Bergen <sakari.bergen@beatwaves.net>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2015-2016 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2016-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_location_h__
 #define __ardour_location_h__
@@ -55,6 +61,7 @@ public:
 		IsSkip = 0x80,
 		IsSkipping = 0x100, /* skipping is active (or not) */
 		IsClockOrigin = 0x200,
+		IsXrun = 0x400,
 	};
 
 	Location (Session &);
@@ -69,6 +76,7 @@ public:
 	void lock ();
 	void unlock ();
 
+	int64_t timestamp() const { return _timestamp; };
 	samplepos_t start() const { return _start; }
 	samplepos_t end() const { return _end; }
 	samplecnt_t length() const { return _end - _start; }
@@ -101,6 +109,7 @@ public:
 	bool is_skip() const { return _flags & IsSkip; }
 	bool is_clock_origin() const { return _flags & IsClockOrigin; }
 	bool is_skipping() const { return (_flags & IsSkip) && (_flags & IsSkipping); }
+	bool is_xrun() const { return _flags & IsXrun; }
 	bool matches (Flags f) const { return _flags & f; }
 
 	Flags flags () const { return _flags; }
@@ -160,6 +169,7 @@ private:
 	bool               _locked;
 	PositionLockStyle  _position_lock_style;
 	boost::shared_ptr<SceneChange> _scene_change;
+	int64_t            _timestamp;
 
 	void set_mark (bool yn);
 	bool set_flag_internal (bool yn, Flags flag);

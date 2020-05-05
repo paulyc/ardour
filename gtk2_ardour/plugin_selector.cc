@@ -1,21 +1,28 @@
 /*
-    Copyright (C) 2000-2006 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2006 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2005-2007 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2005-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2007-2012 David Robillard <d@drobilla.net>
+ * Copyright (C) 2009-2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2013-2014 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2014-2018 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 #ifdef WAF_BUILD
 #include "gtk2ardour-config.h"
 #endif
@@ -24,6 +31,7 @@
 #include <map>
 
 #include <algorithm>
+#include <boost/tokenizer.hpp>
 
 #include <gtkmm/button.h>
 #include <gtkmm/comboboxtext.h>
@@ -74,6 +82,7 @@ PluginSelector::PluginSelector (PluginManager& mgr)
 
 	manager.PluginListChanged.connect (plugin_list_changed_connection, invalidator (*this), boost::bind (&PluginSelector::build_plugin_menu, this), gui_context());
 	manager.PluginStatusChanged.connect (plugin_list_changed_connection, invalidator (*this), boost::bind (&PluginSelector::build_plugin_menu, this), gui_context());
+	manager.PluginTagChanged.connect (plugin_list_changed_connection, invalidator (*this), boost::bind (&PluginSelector::build_plugin_menu, this), gui_context());
 
 	manager.PluginStatusChanged.connect (plugin_list_changed_connection, invalidator (*this), boost::bind (&PluginSelector::plugin_status_changed, this, _1, _2, _3), gui_context());
 	manager.PluginTagChanged.connect(plugin_list_changed_connection, invalidator (*this), boost::bind (&PluginSelector::tags_changed, this, _1, _2, _3), gui_context());
@@ -302,10 +311,15 @@ PluginSelector::PluginSelector (PluginManager& mgr)
 	VBox* to_be_inserted_vbox = manage (new VBox);
 	to_be_inserted_vbox->pack_start (ascroller);
 	to_be_inserted_vbox->pack_start (*add_remove, false, false);
-	to_be_inserted_vbox->set_size_request (200, -1);
+
+	int min_width  = std::max (200.f, rintf(200.f * UIConfiguration::instance().get_ui_scale()));
+	int min_height = std::max (600.f, rintf(600.f * UIConfiguration::instance().get_ui_scale()));
+
+	to_be_inserted_vbox->set_size_request (min_width, -1);
 
 	Gtk::Table* table = manage(new Gtk::Table(3, 3));
-	table->set_size_request(-1, 600);
+	table->set_size_request(-1, min_height);
+
 	table->attach (scroller,               0, 3, 0, 5); /* this is the main plugin list */
 	table->attach (*search_frame,          0, 1, 6, 7, FILL, FILL, 5, 5);
 	table->attach (*tag_frame,             0, 1, 7, 8, FILL, FILL, 5, 5);
@@ -344,6 +358,27 @@ PluginSelector::added_row_clicked(GdkEventButton* event)
 		btn_remove_clicked();
 }
 
+
+static void
+setup_search_string (string& searchstr)
+{
+	transform (searchstr.begin(), searchstr.end(), searchstr.begin(), ::toupper);
+}
+
+static bool
+match_search_strings (string const& haystack, string const& needle)
+{
+	boost::char_separator<char> sep (" ");
+	typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
+	tokenizer t (needle, sep);
+	for (tokenizer::iterator ti = t.begin(); ti != t.end(); ++ti) {
+		if (haystack.find (*ti) == string::npos) {
+			return false;
+		}
+	}
+	return true;
+}
+
 bool
 PluginSelector::show_this_plugin (const PluginInfoPtr& info, const std::string& searchstr)
 {
@@ -353,22 +388,16 @@ PluginSelector::show_this_plugin (const PluginInfoPtr& info, const std::string& 
 
 	if (!searchstr.empty()) {
 
-		std::string compstr;
-
 		if (_search_name_checkbox->get_active()) { /* name contains */
-			compstr = info->name;
-			transform (compstr.begin(), compstr.end(), compstr.begin(), ::toupper);
-			if (compstr.find (searchstr) != string::npos) {
-				maybe_show = true;
-			}
+			std::string compstr = info->name;
+			setup_search_string (compstr);
+			maybe_show |= match_search_strings (compstr, searchstr);
 		}
 
 		if (_search_tags_checkbox->get_active()) { /* tag contains */
-			compstr = manager.get_tags_as_string (info);
-			transform (compstr.begin(), compstr.end(), compstr.begin(), ::toupper);
-			if (compstr.find (searchstr) != string::npos) {
-				maybe_show = true;
-			}
+			std::string compstr = manager.get_tags_as_string (info);
+			setup_search_string (compstr);
+			maybe_show |= match_search_strings (compstr, searchstr);
 		}
 
 		if (!maybe_show) {
@@ -451,13 +480,6 @@ PluginSelector::show_this_plugin (const PluginInfoPtr& info, const std::string& 
 }
 
 void
-PluginSelector::setup_search_string (string& searchstr)
-{
-	searchstr = search_entry.get_text ();
-	transform (searchstr.begin(), searchstr.end(), searchstr.begin(), ::toupper);
-}
-
-void
 PluginSelector::set_sensitive_widgets ()
 {
 	if (_search_ignore_checkbox->get_active() && !search_entry.get_text().empty()) {
@@ -495,8 +517,6 @@ PluginSelector::refill ()
 		return;
 	}
 
-	std::string searchstr;
-
 	in_row_change = true;
 
 	plugin_display.set_model (Glib::RefPtr<Gtk::TreeStore>(0));
@@ -510,6 +530,7 @@ PluginSelector::refill ()
 
 	plugin_model->clear ();
 
+	std::string searchstr = search_entry.get_text ();
 	setup_search_string (searchstr);
 
 	ladspa_refiller (searchstr);

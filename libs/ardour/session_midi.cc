@@ -1,21 +1,27 @@
 /*
-  Copyright (C) 1999-2002 Paul Davis
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2009 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2005-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2012 David Robillard <d@drobilla.net>
+ * Copyright (C) 2008 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2012-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2013 Michael Fisher <mfisher31@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <string>
 #include <cmath>
@@ -130,19 +136,6 @@ Session::mmc_record_pause (MIDI::MachineControl &/*mmc*/)
 void
 Session::mmc_record_strobe (MIDI::MachineControl &/*mmc*/)
 {
-	if (Profile->get_trx()) {
-
-		/* In Tracks Live, there is no concept of punch, so we just
-		   treat RecordStrobe like RecordPause. This violates the MMC
-		   specification.
-		*/
-
-		if (Config->get_mmc_control()) {
-			maybe_enable_record();
-		}
-		return;
-	}
-
 	if (!Config->get_mmc_control() || (_step_editors > 0)) {
 		return;
 	}
@@ -313,7 +306,7 @@ Session::mmc_locate (MIDI::MachineControl &/*mmc*/, const MIDI::byte* mmc_tc)
 		mtcs->handle_locate (mmc_tc);
 	} else {
 		// cerr << "Locate without MTC slave\n";
-		request_locate (target_sample, false);
+		request_locate (target_sample, MustStop);
 	}
 }
 
@@ -463,7 +456,7 @@ Session::send_full_time_code (samplepos_t const t, MIDI::pframes_t nframes)
 	// Send message at offset 0, sent time is for the start of this cycle
 
 	MidiBuffer& mb (_midi_ports->mtc_output_port()->get_midi_buffer (nframes));
-	mb.push_back (Port::port_offset(), sizeof (msg), msg);
+	mb.push_back (0, sizeof (msg), msg);
 
 	_pframes_since_last_mtc = 0;
 	return 0;
@@ -605,12 +598,7 @@ Session::send_midi_time_code_for_cycle (samplepos_t start_sample, samplepos_t en
 void
 Session::send_immediate_mmc (MachineControlCommand c)
 {
-	if (AudioEngine::instance()->in_process_thread()) {
-		_mmc->send (c, Port::port_offset());
-	} else {
-		_mmc->send (c, 0);
-	}
-
+	_mmc->send (c, 0);
 }
 
 bool
@@ -664,18 +652,6 @@ Session::start_midi_thread ()
 }
 
 boost::shared_ptr<ARDOUR::Port>
-Session::midi_input_port () const
-{
-	return _midi_ports->midi_input_port ();
-}
-
-boost::shared_ptr<ARDOUR::Port>
-Session::midi_output_port () const
-{
-	return _midi_ports->midi_output_port ();
-}
-
-boost::shared_ptr<ARDOUR::Port>
 Session::mmc_output_port () const
 {
 	return _midi_ports->mmc_output_port ();
@@ -699,12 +675,17 @@ Session::scene_input_port () const
 	return _midi_ports->scene_input_port ();
 }
 
+boost::shared_ptr<AsyncMIDIPort>
+Session::vkbd_output_port () const
+{
+	return _midi_ports->vkbd_output_port ();
+}
+
 boost::shared_ptr<MidiPort>
 Session::midi_clock_output_port () const
 {
 	return _midi_ports->midi_clock_output_port ();
 }
-
 
 boost::shared_ptr<MidiPort>
 Session::mtc_output_port () const
@@ -748,10 +729,6 @@ Session::rewire_selected_midi (boost::shared_ptr<MidiTrack> new_midi_target)
 
 	if (!msp.empty()) {
 
-		if (old_midi_target) {
-			old_midi_target->input()->disconnect (this);
-		}
-
 		for (vector<string>::const_iterator p = msp.begin(); p != msp.end(); ++p) {
 			PortManager::MidiPortInformation mpi (AudioEngine::instance()->midi_port_information (*p));
 
@@ -761,7 +738,7 @@ Session::rewire_selected_midi (boost::shared_ptr<MidiTrack> new_midi_target)
 			 * functionality.
 			 */
 
-			if (!(mpi.properties & MidiPortControl)) {
+			if (MidiPortControl != mpi.properties) {
 				/* disconnect the port from everything */
 				AudioEngine::instance()->disconnect (*p);
 			}

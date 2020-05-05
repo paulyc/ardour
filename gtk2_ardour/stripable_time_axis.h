@@ -1,20 +1,19 @@
 /*
  * Copyright (C) 2017 Robin Gareus <robin@gareus.org>
- * Copyright (C) 2016 Paul Davis
  *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 #ifndef __ardour_stripable_time_axis_h__
@@ -41,6 +40,10 @@ public:
 
 	void request_redraw ();
 
+	virtual void show_all_automation (bool apply_to_selection = false);
+	virtual void show_existing_automation (bool apply_to_selection = false);
+	virtual void hide_all_automation (bool apply_to_selection = false);
+
 protected:
 	void reset_samples_per_pixel ();
 	virtual void set_samples_per_pixel (double);
@@ -55,10 +58,6 @@ protected:
 	void update_gain_track_visibility ();
 	void update_trim_track_visibility ();
 	void update_mute_track_visibility ();
-
-	virtual void show_all_automation (bool apply_to_selection = false);
-	virtual void show_existing_automation (bool apply_to_selection = false);
-	virtual void hide_all_automation (bool apply_to_selection = false);
 
 	boost::shared_ptr<ARDOUR::Stripable> _stripable;
 

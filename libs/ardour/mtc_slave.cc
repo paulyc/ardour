@@ -1,22 +1,24 @@
 /*
-    Copyright (C) 2002-4 Paul Davis
-    Overhaul 2012 Robin Gareus <robin@gareus.org>
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2006-2012 David Robillard <d@drobilla.net>
+ * Copyright (C) 2008-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2009-2010 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2012-2017 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013-2018 John Emmas <john@creativepost.co.uk>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 #include <iostream>
 #include <errno.h>
 #include <sys/types.h>
@@ -31,6 +33,7 @@
 #include "ardour/midi_port.h"
 #include "ardour/session.h"
 #include "ardour/transport_master.h"
+#include "ardour/transport_master_manager.h"
 
 #include "pbd/i18n.h"
 
@@ -66,13 +69,11 @@ MTC_TransportMaster::MTC_TransportMaster (std::string const & name)
 	, busy_guard2 (0)
 	, printed_timecode_warning (false)
 {
-	if ((_port = create_midi_port (string_compose ("%1 in", name))) == 0) {
-		throw failed_constructor();
-	}
-
-	DEBUG_TRACE (DEBUG::Slave, string_compose ("MTC registered %1\n", _port->name()));
-
 	init ();
+
+	resync_latency();
+
+	AudioEngine::instance()->GraphReordered.connect_same_thread (port_connections, boost::bind (&MTC_TransportMaster::resync_latency, this));
 }
 
 MTC_TransportMaster::~MTC_TransportMaster()
@@ -80,17 +81,7 @@ MTC_TransportMaster::~MTC_TransportMaster()
 	port_connections.drop_connections();
 	config_connection.disconnect();
 
-	while (busy_guard1 != busy_guard2) {
-		/* make sure MIDI parser is not currently calling any callbacks in here,
-		 * else there's a segfault ahead!
-		 *
-		 * XXX this is called from jack rt-context :(
-		 * TODO fix libs/ardour/session_transport.cc:1321 (delete _slave;)
-		 */
-		sched_yield();
-	}
-
-	if (did_reset_tc_format) {
+	if (_session && did_reset_tc_format) {
 		_session->config.set_timecode_format (saved_tc_format);
 	}
 }
@@ -99,6 +90,24 @@ void
 MTC_TransportMaster::init ()
 {
 	reset (true);
+}
+
+void
+MTC_TransportMaster::resync_latency()
+{
+	DEBUG_TRACE (DEBUG::MTC, "MTC resync_latency()\n");
+
+	if (_port) {
+		_port->get_connected_latency_range (mtc_slave_latency, false);
+	}
+}
+
+void
+MTC_TransportMaster::create_port ()
+{
+	if ((_port = create_midi_port (string_compose ("%1 in", _name))) == 0) {
+		throw failed_constructor();
+	}
 }
 
 void
@@ -133,6 +142,8 @@ MTC_TransportMaster::pre_process (MIDI::pframes_t nframes, samplepos_t now, boos
 	/* Read and parse incoming MIDI */
 
 	maybe_reset ();
+
+	now -= mtc_slave_latency.max;
 
 	_midi_port->read_and_parse_entire_midi_buffer_with_no_speed_adjustment (nframes, parser, now);
 
@@ -435,9 +446,12 @@ MTC_TransportMaster::update_mtc_time (const MIDI::byte *msg, bool was_full, samp
 
 	if (was_full || outside_window (mtc_frame)) {
 		DEBUG_TRACE (DEBUG::MTC, string_compose ("update_mtc_time: full TC %1 or outside window %2 MTC %3\n", was_full, outside_window (mtc_frame), mtc_frame));
-		_session->set_requested_return_sample (-1);
-		_session->request_transport_speed (0, TRS_MTC);
-		_session->request_locate (mtc_frame, false, TRS_MTC);
+		boost::shared_ptr<TransportMaster> c = TransportMasterManager::instance().current();
+		if (c && c.get() == this && _session->config.get_external_sync()) {
+			_session->set_requested_return_sample (-1);
+			_session->request_transport_speed (0, TRS_MTC);
+			_session->request_locate (mtc_frame, MustStop, TRS_MTC);
+		}
 		update_mtc_status (MIDI::MTC_Stopped);
 		reset (false);
 		reset_window (mtc_frame);
@@ -573,7 +587,7 @@ MTC_TransportMaster::position_string() const
 std::string
 MTC_TransportMaster::delta_string () const
 {
-	char delta[80];
+	char delta[128];
 	SafeTime last;
 	current.safe_read (last);
 
@@ -582,8 +596,14 @@ MTC_TransportMaster::delta_string () const
 	if (last.timestamp == 0 || reset_pending) {
 		snprintf(delta, sizeof(delta), "\u2012\u2012\u2012\u2012");
 	} else {
-		snprintf(delta, sizeof(delta), "\u0394<span foreground=\"green\" face=\"monospace\" >%s%s%" PRIi64 "</span>sm",
-				LEADINGZERO(abs(_current_delta)), PLUSMINUS(-_current_delta), abs(_current_delta));
+		if (abs (_current_delta) > _session->sample_rate()) {
+			int secs = rint ((double) _current_delta / _session->sample_rate());
+			snprintf(delta, sizeof(delta), "\u0394<span foreground=\"green\" face=\"monospace\" >%s%s%d</span><span face=\"monospace\"> s</span>",
+			         LEADINGZERO(abs(secs)), PLUSMINUS(-secs), abs(secs));
+		} else {
+			snprintf(delta, sizeof(delta), "\u0394<span foreground=\"green\" face=\"monospace\" >%s%s%" PRIi64 "</span><span face=\"monospace\">sm</span>",
+			         LEADINGZERO(abs(_current_delta)), PLUSMINUS(-_current_delta), abs(_current_delta));
+		}
 	}
 	return std::string(delta);
 }

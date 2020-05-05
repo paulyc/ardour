@@ -41,7 +41,7 @@
         <menuitem action='monitor-dim-all'/>
         <menuitem action='monitor-mono'/>
       </menu>
-      
+
       <menu name='Metadata' action='Metadata'>
         <menuitem action='EditMetadata'/>
         <menuitem action='ImportMetadata'/>
@@ -49,7 +49,8 @@
       <menu name='Cleanup' action='Cleanup'>
         <menuitem action='bring-into-session'/>
         <menuitem action='CleanupPeakFiles'/>
-        <menuitem action='CleanupUnused'/>
+        <menuitem action='CleanupUnusedSources'/>
+        <menuitem action='CleanupUnusedRegions'/>
         <menuitem action='FlushWastebasket'/>
       </menu>
 #ifdef __APPLE__
@@ -153,6 +154,7 @@
       </menu>
 
       <separator/>
+      <menuitem action='ToggleTimeMaster'/>
       <menuitem action='TogglePunch'/>
       <menuitem action='TogglePunchIn'/>
       <menuitem action='TogglePunchOut'/>
@@ -183,6 +185,7 @@
       <menu action="SelectMenu">
         <menuitem action='select-all-objects'/>
         <menuitem action='select-all-tracks'/>
+        <menuitem action='select-all-visible-lanes'/>
         <menuitem action='deselect-all'/>
         <menuitem action='invert-selection'/>
         <separator/>
@@ -234,6 +237,7 @@
         <menuitem action='toggle-region-fade-out'/>
       </menu>
       <separator/>
+      <menuitem action='tag-last-capture'/>
       <menuitem action='remove-last-capture'/>
       <separator/>
       <menu action="EditPointMenu">
@@ -274,15 +278,15 @@
       <menu action="LuaScripts">
         <menuitem action='toggle-script-manager'/>
         <separator/>
-        <menuitem action='script-action-1'/>
-        <menuitem action='script-action-2'/>
-        <menuitem action='script-action-3'/>
-        <menuitem action='script-action-4'/>
-        <menuitem action='script-action-5'/>
-        <menuitem action='script-action-6'/>
-        <menuitem action='script-action-7'/>
-        <menuitem action='script-action-8'/>
-        <menuitem action='script-action-9'/>
+        <menuitem action='script-1'/>
+        <menuitem action='script-2'/>
+        <menuitem action='script-3'/>
+        <menuitem action='script-4'/>
+        <menuitem action='script-5'/>
+        <menuitem action='script-6'/>
+        <menuitem action='script-7'/>
+        <menuitem action='script-8'/>
+        <menuitem action='script-9'/>
       </menu>
 #ifndef __APPLE__
       <separator/>
@@ -291,8 +295,9 @@
     </menu>
 
     <menu name='RegionMenu' action='RegionMenu'>
-      <menuitem action='insert-region-from-region-list'/>
+      <menuitem action='insert-region-from-source-list'/>
       <menuitem action='play-selected-regions'/>
+      <menuitem action='tag-selected-regions'/>
       <menuitem action='loop-region'/>
       <menuitem action='rename-region'/>
       <menuitem action='show-region-properties'/>
@@ -412,6 +417,7 @@
       <separator/>
       <menuitem action='toggle-track-active'/>
       <menuitem action='remove-track'/>
+      <separator/>
     </menu>
 
     <menu name='View' action = 'View'>
@@ -420,6 +426,14 @@
 
       <separator/>
 
+      <menu action="AutomationMenu">
+        <menuitem action="toggle-all-existing-automation"/>
+      </menu>
+
+      <separator/>
+
+      <menuitem action="toggle-layer-display"/>
+      
       <menu action="PrimaryClockMenu">
         <menuitem action='focus-on-clock'/>
         <menuitem action="primary-clock-timecode"/>
@@ -533,6 +547,7 @@
 #endif
       <menuitem action='ToggleVCAPane'/>
       <menuitem action='ToggleMonitorSection'/>
+      <menuitem action='ToggleFoldbackStrip'/>
 
     </menu>
     <menu action = 'WindowMenu'>
@@ -587,6 +602,7 @@
       <menuitem action='ManageTemplates'/>
       <menuitem action='toggle-key-editor'/>
       <separator/>
+      <menuitem action='toggle-virtual-keyboard'/>
       <menuitem action='NewMIDITracer'/>
       <menuitem action='toggle-log-window'/>
       <separator/>
@@ -702,26 +718,6 @@
 
   <popup name='RegionListMenu' accelerators='true'>
     <menuitem action='rlAudition'/>
-    <menuitem action='rlHide'/>
-    <menuitem action='rlShow'/>
-    <separator/>
-    <menuitem action='rlShowAll'/>
-    <menuitem action='rlShowAuto'/>
-    <menu name='Sort' action='RegionListSort'>
-      <menuitem action='SortAscending'/>
-      <menuitem action='SortDescending'/>
-      <separator/>
-      <menuitem action='SortByRegionName'/>
-      <menuitem action='SortByRegionLength'/>
-      <menuitem action='SortByRegionPosition'/>
-      <menuitem action='SortByRegionTimestamp'/>
-      <menuitem action='SortByRegionStartinFile'/>
-      <menuitem action='SortByRegionEndinFile'/>
-      <menuitem action='SortBySourceFileName'/>
-      <menuitem action='SortBySourceFileLength'/>
-      <menuitem action='SortBySourceFileCreationDate'/>
-      <menuitem action='SortBySourceFilesystem'/>
-    </menu>
     <separator/>
     <menuitem action='addExternalAudioToRegionList'/>
     <separator/>
@@ -730,6 +726,7 @@
 
   <popup name='PopupRegionMenu' action='PopupRegionMenu' accelerators='true'>
     <menuitem action='play-selected-regions'/>
+    <menuitem action='tag-selected-regions'/>
     <menuitem action='loop-region'/>
     <menuitem action='rename-region'/>
     <menuitem action='show-region-properties'/>

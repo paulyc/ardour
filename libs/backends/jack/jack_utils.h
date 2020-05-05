@@ -1,21 +1,20 @@
 /*
-    Copyright (C) 2011 Tim Mayberry
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2013 Paul Davis <paul@linuxaudiosystems.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <stdint.h>
 
@@ -30,6 +29,7 @@ namespace ARDOUR {
 	extern const char * const coreaudio_driver_name;
 	extern const char * const alsa_driver_name;
 	extern const char * const oss_driver_name;
+	extern const char * const sun_driver_name;
 	extern const char * const freebob_driver_name;
 	extern const char * const ffado_driver_name;
 	extern const char * const netjack_driver_name;
@@ -110,6 +110,7 @@ namespace ARDOUR {
 	void get_jack_portaudio_device_names (device_map_t& devices);
 	void get_jack_coreaudio_device_names (device_map_t& devices);
 	void get_jack_oss_device_names (device_map_t& devices);
+	void get_jack_sun_device_names (device_map_t& devices);
 	void get_jack_freebob_device_names (device_map_t& devices);
 	void get_jack_ffado_device_names (device_map_t& devices);
 	void get_jack_netjack_device_names (device_map_t& devices);

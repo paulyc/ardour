@@ -1,21 +1,20 @@
 /*
-    Copyright (C) 2016 Robin Gareus <robin@gareus.org>
-    Copyright (C) 2006 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify it
-    under the terms of the GNU General Public License as published by the Free
-    Software Foundation; either version 2 of the License, or (at your option)
-    any later version.
-
-    This program is distributed in the hope that it will be useful, but WITHOUT
-    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-    FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
-    for more details.
-
-    You should have received a copy of the GNU General Public License along
-    with this program; if not, write to the Free Software Foundation, Inc.,
-    675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2016-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 /* print runtime and garbage-collection timing statistics */
 //#define WITH_LUAPROC_STATS
@@ -31,6 +30,7 @@
 #include <vector>
 #include <string>
 
+#define USE_TLSF
 #ifdef USE_TLSF
 #  include "pbd/tlsf.h"
 #else
@@ -212,6 +212,12 @@ class LIBARDOUR_API LuaPluginInfo : public PluginInfo
 	std::vector<Plugin::PresetRecord> get_presets (bool user_only) const;
 
 	bool reconfigurable_io() const { return true; }
+	uint32_t max_configurable_ouputs () const {
+		return _max_outputs;
+	}
+
+	private:
+	uint32_t _max_outputs;
 };
 
 typedef boost::shared_ptr<LuaPluginInfo> LuaPluginInfoPtr;

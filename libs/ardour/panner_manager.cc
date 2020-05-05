@@ -1,21 +1,25 @@
 /*
-    Copyright (C) 2011 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2011-2016 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2011 David Robillard <d@drobilla.net>
+ * Copyright (C) 2012-2014 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2014 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2014 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <unistd.h>
 
@@ -25,6 +29,7 @@
 #include "pbd/error.h"
 #include "pbd/compose.h"
 #include "pbd/file_utils.h"
+#include "pbd/stateful.h"
 #include "pbd/stl_delete.h"
 
 #include "ardour/debug.h"
@@ -64,13 +69,13 @@ PannerManager::instance ()
 static bool panner_filter (const string& str, void */*arg*/)
 {
 #ifdef COMPILER_MSVC
-   /**
-    * Different build targets (Debug / Release etc) use different versions
-    * of the 'C' runtime (which can't be 'mixed & matched'). Therefore, in
-    * case the supplied search path contains multiple version(s) of a given
-    * panner module, only select the one(s) which match the current build
-    * target (otherwise, all hell will break loose !!)
-    */
+	/**
+	 * Different build targets (Debug / Release etc) use different versions
+	 * of the 'C' runtime (which can't be 'mixed & matched'). Therefore, in
+	 * case the supplied search path contains multiple version(s) of a given
+	 * panner module, only select the one(s) which match the current build
+	 * target (otherwise, all hell will break loose !!)
+	 */
 	#if defined (_DEBUG)
 		return str.length() > 12 && (str.find ("panner_") == 0) && (str.find ("D.dll") == (str.length() - 5));
 	#elif defined (RDC_BUILD)
@@ -166,27 +171,34 @@ PannerInfo*
 PannerManager::select_panner (ChanCount in, ChanCount out, std::string const uri)
 {
 	PannerInfo* rv = NULL;
-	PanPluginDescriptor* d;
 	int32_t nin = in.n_audio();
 	int32_t nout = out.n_audio();
 	uint32_t priority = 0;
 
 	/* look for user-preference -- check if channels match */
 	for (list<PannerInfo*>::iterator p = panner_info.begin(); p != panner_info.end(); ++p) {
-		d = &(*p)->descriptor;
-		if (d->panner_uri != uri) continue;
-		if (d->in != nin && d->in != -1) continue;
-		if (d->out != nout && d->out != -1) continue;
+		PanPluginDescriptor const& d ((*p)->descriptor);
+		if (d.panner_uri != uri) continue;
+		if (d.in != nin && d.in != -1) continue;
+		if (d.out != nout && d.out != -1) continue;
 		return *p;
 	}
 
 	/* look for exact match first */
 
 	for (list<PannerInfo*>::iterator p = panner_info.begin(); p != panner_info.end(); ++p) {
-		d = &(*p)->descriptor;
+		PanPluginDescriptor const& d ((*p)->descriptor);
 
-		if (d->in == nin && d->out == nout && d->priority > priority) {
-			priority = d->priority;
+		/* backward compat */
+		if (Stateful::loading_state_version < 6000 && d.panner_uri == "http://ardour.org/plugin/panner_2in2out") {
+			if (d.in == nin && d.out == nout) {
+				priority = 9999;
+				rv = *p;
+			}
+		}
+
+		if (d.in == nin && d.out == nout && d.priority > priority) {
+			priority = d.priority;
 			rv = *p;
 		}
 	}
@@ -194,38 +206,45 @@ PannerManager::select_panner (ChanCount in, ChanCount out, std::string const uri
 
 	/* no exact match, look for good fit on inputs and variable on outputs */
 
+#if 0
 	priority = 0;
-	for (list<PannerInfo*>::iterator p = panner_info.begin(); p != panner_info.end(); ++p) {
-		d = &(*p)->descriptor;
+	/* unused, so far Ardour only features 4 panners:
+	 * in =  1 ; out =  2 // Mono to Stereo
+	 * in =  2 ; out =  2 // Equal Power Stereo
+	 * in =  2 ; out =  2 // Stereo Balance
+	 * in = -1 ; out = -1 // VBAP
+	 */
 
-		if (d->in == nin && d->out == -1 && d->priority > priority) {
-			priority = d->priority;
+	for (list<PannerInfo*>::iterator p = panner_info.begin(); p != panner_info.end(); ++p) {
+		PanPluginDescriptor const& d ((*p)->descriptor);
+
+		if (d.in == nin && d.out == -1 && d.priority > priority) {
+			priority = d.priority;
 			rv = *p;
 		}
 	}
 	if (rv) { return rv; }
 
 	/* no exact match, look for good fit on outputs and variable on inputs */
-
 	priority = 0;
 	for (list<PannerInfo*>::iterator p = panner_info.begin(); p != panner_info.end(); ++p) {
-		d = &(*p)->descriptor;
+		PanPluginDescriptor const& d ((*p)->descriptor);
 
-		if (d->in == -1 && d->out == nout && d->priority > priority) {
-			priority = d->priority;
+		if (d.in == -1 && d.out == nout && d.priority > priority) {
+			priority = d.priority;
 			rv = *p;
 		}
 	}
 	if (rv) { return rv; }
+#endif
 
 	/* no exact match, look for variable fit on inputs and outputs */
-
 	priority = 0;
 	for (list<PannerInfo*>::iterator p = panner_info.begin(); p != panner_info.end(); ++p) {
-		d = &(*p)->descriptor;
+		PanPluginDescriptor const& d ((*p)->descriptor);
 
-		if (d->in == -1 && d->out == -1 && d->priority > priority) {
-			priority = d->priority;
+		if (d.in == -1 && d.out == -1 && d.priority > priority) {
+			priority = d.priority;
 			rv = *p;
 		}
 	}
@@ -261,11 +280,11 @@ PannerManager::get_available_panners(uint32_t const a_in, uint32_t const a_out) 
 
 	/* get available panners for current configuration. */
 	for (list<PannerInfo*>::const_iterator p = panner_info.begin(); p != panner_info.end(); ++p) {
-		 PanPluginDescriptor* d = &(*p)->descriptor;
-		 if (d->in != -1 && d->in != in) continue;
-		 if (d->out != -1 && d->out != out) continue;
-		 if (d->in == -1 && d->out == -1 && out <= 2) continue;
-		 panner_list.insert(std::pair<std::string,std::string>(d->panner_uri,d->name));
+		PanPluginDescriptor const& d ((*p)->descriptor);
+		if (d.in != -1 && d.in != in) continue;
+		if (d.out != -1 && d.out != out) continue;
+		if (d.in == -1 && d.out == -1 && out <= 2) continue;
+		panner_list.insert(std::pair<std::string,std::string>(d.panner_uri,d.name));
 	}
 	return panner_list;
 }

@@ -1,21 +1,24 @@
 /*
-  Copyright (C) 2002-2004 Paul Davis
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2006-2011 David Robillard <d@drobilla.net>
+ * Copyright (C) 2006-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2012-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013-2015 Tim Mayberry <mojofunk@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_audioengine_h__
 #define __ardour_audioengine_h__
@@ -34,6 +37,7 @@
 #include <glibmm/threads.h>
 
 #include "pbd/signals.h"
+#include "pbd/pthread_utils.h"
 #include "pbd/stacktrace.h"
 
 #include "ardour/ardour.h"
@@ -68,7 +72,6 @@ class LIBARDOUR_API AudioEngine : public PortManager, public SessionHandlePtr
 	int discover_backends();
 	std::vector<const AudioBackendInfo*> available_backends() const;
 	std::string current_backend_name () const;
-	boost::shared_ptr<AudioBackend> set_default_backend ();
 	boost::shared_ptr<AudioBackend> set_backend (const std::string&, const std::string& arg1, const std::string& arg2);
 	boost::shared_ptr<AudioBackend> current_backend() const { return _backend; }
 	bool setup_required () const;
@@ -115,7 +118,7 @@ class LIBARDOUR_API AudioEngine : public PortManager, public SessionHandlePtr
 	 * - pbd_realtime_pthread_create
 	 * - pbd_set_thread_priority
 	 */
-	virtual int    client_real_time_priority () { return -22; }
+	virtual int    client_real_time_priority () { return PBD_RT_PRI_PROC; }
 
 	int            backend_reset_requested();
 	void           request_backend_reset();
@@ -153,8 +156,6 @@ class LIBARDOUR_API AudioEngine : public PortManager, public SessionHandlePtr
 	void set_session (Session *);
 	void remove_session (); // not a replacement for SessionHandle::session_going_away()
 	Session* session() const { return _session; }
-
-	void reconnect_session_routes (bool reconnect_inputs = true, bool reconnect_outputs = true);
 
 	class NoBackendAvailable : public std::exception {
 	    public:
@@ -284,8 +285,8 @@ class LIBARDOUR_API AudioEngine : public PortManager, public SessionHandlePtr
 	MTDM*                     _mtdm;
 	MIDIDM*                   _mididm;
 	LatencyMeasurement        _measuring_latency;
-	PortEngine::PortHandle    _latency_input_port;
-	PortEngine::PortHandle    _latency_output_port;
+	PortEngine::PortPtr       _latency_input_port;
+	PortEngine::PortPtr       _latency_output_port;
 	samplecnt_t               _latency_flush_samples;
 	std::string               _latency_input_name;
 	std::string               _latency_output_name;

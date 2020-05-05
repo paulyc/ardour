@@ -1,21 +1,29 @@
 /*
-    Copyright (C) 2005 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2007 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2006-2007 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2006 Sampo Savolainen <v2@iki.fi>
+ * Copyright (C) 2007-2015 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2008-2012 David Robillard <d@drobilla.net>
+ * Copyright (C) 2008 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2012-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2014-2018 Ben Loftis <ben@harrisonconsoles.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifdef WAF_BUILD
 #include "gtk2ardour-config.h"
@@ -32,6 +40,7 @@
 #include "gtkmm2ext/utils.h"
 #include "waveview/wave_view.h"
 
+#include "ardour_message.h"
 #include "audio_clock.h"
 #include "ardour_ui.h"
 #include "actions.h"
@@ -52,7 +61,7 @@ ARDOUR_UI::toggle_external_sync()
 {
 	if (_session) {
 		if (_session->config.get_video_pullup() != 0.0f && (TransportMasterManager::instance().current()->type() == Engine)) {
-			MessageDialog msg (_("It is not possible to use JACK as the the sync source\n when the pull up/down setting is non-zero."));
+			ArdourMessageDialog msg (_("It is not possible to use JACK as the sync source\n when the pull up/down setting is non-zero."));
 			msg.run ();
 			return;
 		}
@@ -271,6 +280,13 @@ ARDOUR_UI::toggle_editing_space()
 }
 
 void
+ARDOUR_UI::toggle_latency_switch ()
+{
+	Glib::RefPtr<ToggleAction> tact = ActionManager::get_toggle_action ("Main", "ToggleLatencyCompensation");
+	ARDOUR::Latent::force_zero_latency (tact->get_active());
+}
+
+void
 ARDOUR_UI::setup_session_options ()
 {
 	_session->config.ParameterChanged.connect (_session_connections, MISSING_INVALIDATOR, boost::bind (&ARDOUR_UI::parameter_changed, this, _1), gui_context());
@@ -421,6 +437,8 @@ ARDOUR_UI::parameter_changed (std::string p)
 		repack_transport_hbox ();
 	} else if (p == "show-toolbar-selclock") {
 		repack_transport_hbox ();
+	} else if (p == "show-toolbar-latency") {
+		repack_transport_hbox ();
 	} else if (p == "show-editor-meter") {
 		repack_transport_hbox ();
 	} else if (p == "show-secondary-clock") {
@@ -441,7 +459,7 @@ ARDOUR_UI::parameter_changed (std::string p)
 		VisibilityTracker::set_use_window_manager_visibility (UIConfiguration::instance().get_use_wm_visibility());
 	} else if (p == "action-table-columns") {
 		const uint32_t cols = UIConfiguration::instance().get_action_table_columns ();
-		for (int i = 0; i < MAX_LUA_ACTION_SCRIPTS; ++i) {
+		for (int i = 0; i < MAX_LUA_ACTION_BUTTONS; ++i) {
 			const int col = i / 2;
 			if (cols & (1<<col)) {
 				action_script_call_btn[i].show();
@@ -467,8 +485,20 @@ ARDOUR_UI::parameter_changed (std::string p)
 		}
 	} else if ( (p == "snap-to-region-sync") || (p == "snap-to-region-start") || (p == "snap-to-region-end") ) {
 		if (editor) editor->mark_region_boundary_cache_dirty();
+	} else if (p == "screen-saver-mode") {
+		switch (UIConfiguration::instance().get_screen_saver_mode ()) {
+			using namespace ARDOUR_UI_UTILS;
+			case InhibitWhileRecording:
+				inhibit_screensaver (_session && _session->actively_recording ());
+				break;
+			case InhibitAlways:
+				inhibit_screensaver (true);
+				break;
+			case InhibitNever:
+				inhibit_screensaver (false);
+				break;
+		}
 	}
-
 }
 
 void

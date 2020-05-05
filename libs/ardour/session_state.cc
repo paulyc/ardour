@@ -1,21 +1,31 @@
 /*
-  Copyright (C) 1999-2013 Paul Davis
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 1999-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2005-2006 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2006-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2006-2016 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2006 Jesse Chappell <jesse@essej.net>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2008-2009 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2012-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013-2016 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2013-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2014-2018 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2017 Johannes Mueller <github@johannes-mueller.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 
 #ifdef WAF_BUILD
@@ -34,6 +44,10 @@
 #include <climits>
 #include <signal.h>
 #include <sys/time.h>
+/* for open(2) */
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #ifdef HAVE_SYS_VFS_H
 #include <sys/vfs.h>
@@ -61,7 +75,7 @@
 #include "midi++/mmc.h"
 #include "midi++/port.h"
 
-#include "evoral/SMF.hpp"
+#include "evoral/SMF.h"
 
 #include "pbd/basename.h"
 #include "pbd/debug.h"
@@ -70,6 +84,7 @@
 #include "pbd/file_utils.h"
 #include "pbd/pathexpand.h"
 #include "pbd/pthread_utils.h"
+#include "pbd/scoped_file_descriptor.h"
 #include "pbd/stacktrace.h"
 #include "pbd/types_convert.h"
 #include "pbd/localtime_r.h"
@@ -95,12 +110,10 @@
 #include "ardour/lv2_plugin.h"
 #endif
 #include "ardour/midi_model.h"
-#include "ardour/midi_patch_manager.h"
 #include "ardour/midi_region.h"
 #include "ardour/midi_scene_changer.h"
 #include "ardour/midi_source.h"
 #include "ardour/midi_track.h"
-#include "ardour/pannable.h"
 #include "ardour/playlist_factory.h"
 #include "ardour/playlist_source.h"
 #include "ardour/port.h"
@@ -159,18 +172,8 @@ Session::pre_engine_init (string fullpath)
 	_path = canonical_path(fullpath);
 
 	/* is it new ? */
-	if (Profile->get_trx() ) {
-		// Waves TracksLive has a usecase of session replacement with a new one.
-		// We should check session state file (<session_name>.ardour) existance
-		// to determine if the session is new or not
 
-		string full_session_name = Glib::build_filename( fullpath, _name );
-		full_session_name += statefile_suffix;
-
-		_is_new = !Glib::file_test (full_session_name, Glib::FileTest (G_FILE_TEST_EXISTS | G_FILE_TEST_IS_DIR));
-	} else {
-		_is_new = !Glib::file_test (_path, Glib::FileTest (G_FILE_TEST_EXISTS | G_FILE_TEST_IS_DIR));
-	}
+	_is_new = !Glib::file_test (_path, Glib::FileTest (G_FILE_TEST_EXISTS | G_FILE_TEST_IS_DIR));
 
 	/* finish initialization that can't be done in a normal C++ constructor
 	   definition.
@@ -279,8 +282,7 @@ Session::post_engine_init ()
 
 		/* crossfades require sample rate knowledge */
 
-		SndFileSource::setup_standard_crossfades (*this, sample_rate());
-		_engine.GraphReordered.connect_same_thread (*this, boost::bind (&Session::graph_reordered, this));
+		_engine.GraphReordered.connect_same_thread (*this, boost::bind (&Session::graph_reordered, this, true));
 		_engine.MidiSelectionPortsChanged.connect_same_thread (*this, boost::bind (&Session::rewire_midi_selection_ports, this));
 
 		DiskReader::allocate_working_buffers();
@@ -326,6 +328,9 @@ Session::post_engine_init ()
 			for (RouteList::iterator i = r->begin(); i != r->end(); ++i) {
 				(*i)->configure_processors (0);
 			}
+			/* release process-lock, ProcessorChangeBlocker may trigger
+			 * latency-callback from non-rt thread which may take the lock */
+			lx.release ();
 		}
 
 		/* Reset all panners */
@@ -373,6 +378,12 @@ Session::post_engine_init ()
 		_locations->removed.connect_same_thread (*this, boost::bind (&Session::location_removed, this, _1));
 		_locations->changed.connect_same_thread (*this, boost::bind (&Session::locations_changed, this));
 
+		if (synced_to_engine()) {
+			_engine.transport_stop ();
+		}
+
+		// send_full_time_code (0);
+
 	} catch (AudioEngine::PortRegistrationFailure& err) {
 		error << err.what() << endmsg;
 		return -5;
@@ -386,30 +397,14 @@ Session::post_engine_init ()
 
 	BootMessage (_("Reset Remote Controls"));
 
-	// send_full_time_code (0);
-	_engine.transport_locate (0);
-
 	send_immediate_mmc (MIDI::MachineControlCommand (MIDI::MachineControl::cmdMmcReset));
 	send_immediate_mmc (MIDI::MachineControlCommand (Timecode::Time ()));
 
-	MIDI::Name::MidiPatchManager::instance().add_search_path (session_directory().midi_patch_path() );
-
 	ltc_tx_initialize();
-	/* initial program change will be delivered later; see ::config_changed() */
-
-	_state_of_the_state = Clean;
 
 	Port::set_connecting_blocked (false);
 
-	DirtyChanged (); /* EMIT SIGNAL */
-
-	if (_is_new) {
-		save_state ("");
-	} else if (state_was_pending) {
-		save_state ("");
-		remove_pending_capture_state ();
-		state_was_pending = false;
-	}
+	set_clean ();
 
 	/* Now, finally, we can fill the playback buffers */
 
@@ -423,6 +418,7 @@ Session::post_engine_init ()
 		}
 	}
 
+	reset_xrun_count ();
 	return 0;
 }
 
@@ -431,22 +427,20 @@ Session::session_loaded ()
 {
 	SessionLoaded();
 
-	_state_of_the_state = Clean;
-
-	DirtyChanged (); /* EMIT SIGNAL */
+	set_clean ();
 
 	if (_is_new) {
 		save_state ("");
 	} else if (state_was_pending) {
 		save_state ("");
-		remove_pending_capture_state ();
 		state_was_pending = false;
 	}
 
 	/* Now, finally, we can fill the playback buffers */
 
 	BootMessage (_("Filling playback buffers"));
-	force_locate (_transport_sample, false);
+	force_locate (_transport_sample, MustStop);
+	reset_xrun_count ();
 }
 
 string
@@ -580,11 +574,15 @@ Session::ensure_subdirs ()
  *  Caller must not hold process lock.
  */
 int
-Session::create (const string& session_template, BusProfile* bus_profile)
+Session::create (const string& session_template, BusProfile const * bus_profile, bool unnamed)
 {
 	if (g_mkdir_with_parents (_path.c_str(), 0755) < 0) {
 		error << string_compose(_("Session: cannot create session folder \"%1\" (%2)"), _path, strerror (errno)) << endmsg;
 		return -1;
+	}
+
+	if (unnamed) {
+		PBD::ScopedFileDescriptor fd = g_open (unnamed_file_name().c_str(), O_CREAT|O_TRUNC|O_RDWR, 0666);
 	}
 
 	if (ensure_subdirs ()) {
@@ -594,7 +592,7 @@ Session::create (const string& session_template, BusProfile* bus_profile)
 	_writable = exists_and_writable (_path);
 
 	if (!session_template.empty()) {
-		string in_path = (ARDOUR::Profile->get_trx () ? session_template : session_template_dir_to_file (session_template));
+		string in_path = session_template_dir_to_file (session_template);
 
 		FILE* in = g_fopen (in_path.c_str(), "rb");
 
@@ -637,11 +635,9 @@ Session::create (const string& session_template, BusProfile* bus_profile)
 
 				_is_new = false;
 
-				if (!ARDOUR::Profile->get_trx()) {
-					/* Copy plugin state files from template to new session */
-					std::string template_plugins = Glib::build_filename (session_template, X_("plugins"));
-					copy_recurse (template_plugins, plugins_dir ());
-				}
+				/* Copy plugin state files from template to new session */
+				std::string template_plugins = Glib::build_filename (session_template, X_("plugins"));
+				copy_recurse (template_plugins, plugins_dir ());
 
 				return 0;
 
@@ -660,24 +656,6 @@ Session::create (const string& session_template, BusProfile* bus_profile)
 
 	}
 
-	if (Profile->get_trx()) {
-
-		/* set initial start + end point : ARDOUR::Session::session_end_shift long.
-		 * Remember that this is a brand new session. Sessions
-		 * loaded from saved state will get this range from the saved state.
-		 */
-
-		set_session_range_location (0, 0);
-
-		/* Initial loop location, from absolute zero, length 10 seconds  */
-
-		Location* loc = new Location (*this, 0, 10.0 * _engine.sample_rate(), _("Loop"),  Location::IsAutoLoop, 0);
-		_locations->add (loc, true);
-		set_auto_loop_location (loc);
-	}
-
-	_state_of_the_state = Clean;
-
 	/* set up Master Out and Monitor Out if necessary */
 
 	if (bus_profile) {
@@ -694,6 +672,9 @@ Session::create (const string& session_template, BusProfile* bus_profile)
 				add_monitor_section ();
 		}
 	}
+
+	set_clean ();
+	reset_xrun_count ();
 
 	return 0;
 }
@@ -713,12 +694,19 @@ Session::remove_pending_capture_state ()
 
 	pending_state_file_path = Glib::build_filename (pending_state_file_path, legalize_for_path (_current_snapshot_name) + pending_suffix);
 
-	if (!Glib::file_test (pending_state_file_path, Glib::FILE_TEST_EXISTS)) return;
+	if (!Glib::file_test (pending_state_file_path, Glib::FILE_TEST_EXISTS)) {
+		return;
+	}
 
-	if (g_remove (pending_state_file_path.c_str()) != 0) {
+	if (::g_unlink (pending_state_file_path.c_str()) != 0) {
 		error << string_compose(_("Could not remove pending capture state at path \"%1\" (%2)"),
 				pending_state_file_path, g_strerror (errno)) << endmsg;
 	}
+#ifndef NDEBUG
+	else {
+		cerr << "removed " << pending_state_file_path << endl;
+	}
+#endif
 }
 
 /** Rename a state file.
@@ -781,6 +769,15 @@ Session::save_state (string snapshot_name, bool pending, bool switch_to_snapshot
 {
 	DEBUG_TRACE (DEBUG::Locale, string_compose ("Session::save_state locale '%1'\n", setlocale (LC_NUMERIC, NULL)));
 
+	/* only_used_assets is only possible when archiving */
+	assert (!only_used_assets || for_archive);
+	/* template and archive are exclusive */
+	assert (!template_only || !for_archive);
+	/* switch_to_snapshot needs a new name and can't be pending */
+	assert (!switch_to_snapshot || (!snapshot_name.empty () && snapshot_name != _current_snapshot_name && !pending && !template_only && !for_archive));
+	/* pending saves are for current snapshot only */
+	assert (!pending || ((snapshot_name.empty () || snapshot_name == _current_snapshot_name) && !template_only && !for_archive));
+
 	XMLTree tree;
 	std::string xml_path(_session_dir->root_path());
 
@@ -797,10 +794,20 @@ Session::save_state (string snapshot_name, bool pending, bool switch_to_snapshot
 	}
 
 	if (g_atomic_int_get(&_suspend_save)) {
-		_save_queued = true;
+		/* StateProtector cannot be used for templates or save-as */
+		assert (!template_only && !switch_to_snapshot && !for_archive && (snapshot_name.empty () || snapshot_name == _current_snapshot_name));
+		if (pending) {
+			_save_queued_pending = true;
+		} else {
+			_save_queued = true;
+		}
 		return 1;
 	}
-	_save_queued = false;
+	if (pending) {
+		_save_queued_pending = false;
+	} else {
+		_save_queued = false;
+	}
 
 	snapshot_t fork_state = NormalSave;
 	if (!snapshot_name.empty() && snapshot_name != _current_snapshot_name && !template_only && !pending && !for_archive) {
@@ -860,7 +867,7 @@ Session::save_state (string snapshot_name, bool pending, bool switch_to_snapshot
 		}
 
 	} else {
-
+		assert (snapshot_name == _current_snapshot_name);
 		/* pending save: use pending_suffix (.pending in English) */
 		xml_path = Glib::build_filename (xml_path, legalize_for_path (snapshot_name) + pending_suffix);
 	}
@@ -938,6 +945,11 @@ Session::save_state (string snapshot_name, bool pending, bool switch_to_snapshot
 	const int64_t elapsed_time_us = g_get_monotonic_time() - save_start_time;
 	cerr << "saved state in " << fixed << setprecision (1) << elapsed_time_us / 1000. << " ms\n";
 #endif
+
+	if (!pending && !for_archive && ! template_only) {
+		remove_pending_capture_state ();
+	}
+
 	return 0;
 }
 
@@ -958,7 +970,7 @@ Session::restore_state (string snapshot_name)
 }
 
 int
-Session::load_state (string snapshot_name)
+Session::load_state (string snapshot_name, bool from_template)
 {
 	delete state_tree;
 	state_tree = 0;
@@ -975,7 +987,7 @@ Session::load_state (string snapshot_name)
 		/* there is pending state from a crashed capture attempt */
 
 		boost::optional<int> r = AskAboutPendingState();
-		if (r.get_value_or (1)) {
+		if (r.value_or (1)) {
 			state_was_pending = true;
 		}
 	}
@@ -1020,10 +1032,10 @@ Session::load_state (string snapshot_name)
 
 	if ((Stateful::loading_state_version / 1000L) > (CURRENT_SESSION_FILE_VERSION / 1000L)) {
 		cerr << "Session-version: " << Stateful::loading_state_version << " is not supported. Current: " << CURRENT_SESSION_FILE_VERSION << "\n";
-		throw SessionException (string_compose (_("Incomatible Session Version. That session was created with a newer version of %1"), PROGRAM_NAME));
+		throw SessionException (string_compose (_("Incompatible Session Version. That session was created with a newer version of %1"), PROGRAM_NAME));
 	}
 
-	if (Stateful::loading_state_version < CURRENT_SESSION_FILE_VERSION && _writable) {
+	if (Stateful::loading_state_version < CURRENT_SESSION_FILE_VERSION && _writable && !from_template) {
 
 		std::string backup_path(_session_dir->root_path());
 		std::string backup_filename = string_compose ("%1-%2%3", legalize_for_path (snapshot_name), Stateful::loading_state_version, statefile_suffix);
@@ -1278,7 +1290,7 @@ Session::state (bool save_template, snapshot_t snapshot_type, bool only_used_ass
 		for (SourceMap::iterator siter = sources.begin(); siter != sources.end(); ++siter) {
 
 			/* Don't save information about non-file Sources, or
-			 * about non-destructive file sources that are empty
+			 * about file sources that are empty
 			 * and unused by any regions.
 			 */
 			boost::shared_ptr<FileSource> fs;
@@ -1287,10 +1299,8 @@ Session::state (bool save_template, snapshot_t snapshot_type, bool only_used_ass
 				continue;
 			}
 
-			if (!fs->destructive()) {
-				if (fs->empty() && !fs->used()) {
-					continue;
-				}
+			if (fs->empty() && !fs->used()) {
+				continue;
 			}
 
 			if (only_used_assets) {
@@ -1378,6 +1388,8 @@ Session::state (bool save_template, snapshot_t snapshot_type, bool only_used_ass
 			const RegionFactory::RegionMap& region_map (RegionFactory::all_regions());
 			for (RegionFactory::RegionMap::const_iterator i = region_map.begin(); i != region_map.end(); ++i) {
 				boost::shared_ptr<Region> r = i->second;
+				/* regions must have sources */
+				assert (r->sources().size() > 0 && r->master_sources().size() > 0);
 				/* only store regions not attached to playlists */
 				if (r->playlist() == 0) {
 					if (boost::dynamic_pointer_cast<AudioRegion>(r)) {
@@ -1431,14 +1443,6 @@ Session::state (bool save_template, snapshot_t snapshot_type, bool only_used_ass
 		loc.add (range);
 		XMLNode& locations_state = loc.get_state();
 
-		if (ARDOUR::Profile->get_trx() && _locations) {
-			// For tracks we need stored the Auto Loop Range and all MIDI markers.
-			for (Locations::LocationList::const_iterator i = _locations->list ().begin (); i != _locations->list ().end (); ++i) {
-				if ((*i)->is_mark () || (*i)->is_auto_loop ()) {
-					locations_state.add_child_nocopy ((*i)->get_state ());
-				}
-			}
-		}
 		node->add_child_nocopy (locations_state);
 
 		/* adding a location above will have marked the session
@@ -1562,7 +1566,7 @@ Session::set_state (const XMLNode& node, int version)
 		assert (AudioEngine::instance()->running ());
 		if (_base_sample_rate != AudioEngine::instance()->sample_rate ()) {
 			boost::optional<int> r = AskAboutSampleRateMismatch (_base_sample_rate, _current_sample_rate);
-			if (r.get_value_or (0)) {
+			if (r.value_or (0)) {
 				goto out;
 			}
 		}
@@ -1703,6 +1707,20 @@ Session::set_state (const XMLNode& node, int version)
 		_vca_manager->set_state (*child, version);
 	}
 
+	if (version < 3000) {
+		if ((child = find_named_node (node, "DiskStreams"))) {
+			for (XMLNodeList::const_iterator n = child->children ().begin (); n != child->children ().end (); ++n) {
+				if ((*n)->name() == "AudioDiskstream" || (*n)->name() == "DiskStream") {
+					std::string diskstream_id;
+					std::string playlist_name;
+					if ((*n)->get_property ("playlist", playlist_name) && (*n)->get_property ("id", diskstream_id)) {
+						_diskstreams_2X [PBD::ID(diskstream_id)] = playlist_name;
+					}
+				}
+			}
+		}
+	}
+
 	if ((child = find_named_node (node, "Routes")) == 0) {
 		error << _("Session: XML state has no routes section") << endmsg;
 		goto out;
@@ -1712,6 +1730,8 @@ Session::set_state (const XMLNode& node, int version)
 
 	/* Now that we Tracks have been loaded and playlists are assigned */
 	_playlists->update_tracking ();
+
+	_diskstreams_2X.clear ();
 
 	/* Now that we have Routes and masters loaded, connect them if appropriate */
 
@@ -1762,7 +1782,10 @@ Session::set_state (const XMLNode& node, int version)
 				Glib::Threads::Mutex::Lock lm (lua_lock);
 				(*_lua_load)(std::string ((const char*)buf, size));
 			} catch (luabridge::LuaException const& e) {
+#ifndef NDEBUG
 				cerr << "LuaException:" << e.what () << endl;
+#endif
+				warning << "LuaException: " << e.what () << endmsg;
 			} catch (...) { }
 			g_free (buf);
 		}
@@ -1858,9 +1881,9 @@ Session::XMLRouteFactory (const XMLNode& node, int version)
 		boost::shared_ptr<Track> track;
 
 		if (type == DataType::AUDIO) {
-			track.reset (new AudioTrack (*this, string())); // name will be reset from XML in ::set_state() below
+			track.reset (new AudioTrack (*this));
 		} else {
-			track.reset (new MidiTrack (*this, string())); // name will be reset from XML in ::set_state() below
+			track.reset (new MidiTrack (*this));
 		}
 
 		if (track->init()) {
@@ -1909,9 +1932,9 @@ Session::XMLRouteFactory_3X (const XMLNode& node, int version)
 		boost::shared_ptr<Track> track;
 
 		if (type == DataType::AUDIO) {
-			track.reset (new AudioTrack (*this, X_("toBeResetFroXML")));
+			track.reset (new AudioTrack (*this));
 		} else {
-			track.reset (new MidiTrack (*this, X_("toBeResetFroXML")));
+			track.reset (new MidiTrack (*this));
 		}
 
 		if (track->init()) {
@@ -1959,27 +1982,38 @@ Session::XMLRouteFactory_2X (const XMLNode& node, int version)
 
 	if (ds_prop) {
 
-		/* see comment in current ::set_state() regarding diskstream
-		 * state and DiskReader/DiskWRiter.
-		 */
+		PBD::ID ds_id (ds_prop->value ());
+		std::string playlist_name = _diskstreams_2X[ds_id];
 
-		error << _("Could not find diskstream for route") << endmsg;
-		return boost::shared_ptr<Route> ();
+		boost::shared_ptr<Playlist> pl = playlists()->by_name (playlist_name);
+
+		if (playlist_name.empty () || !pl) {
+			warning << string_compose (_("Could not find diskstream for diskstream-id: '%1', playlist: '%2'"), ds_prop->value (), playlist_name) << endmsg;
+		}
 
 		boost::shared_ptr<Track> track;
 
 		if (type == DataType::AUDIO) {
-			track.reset (new AudioTrack (*this, X_("toBeResetFroXML")));
+			track.reset (new AudioTrack (*this));
 		} else {
-			track.reset (new MidiTrack (*this, X_("toBeResetFroXML")));
+			track.reset (new MidiTrack (*this));
 		}
 
 		if (track->init()) {
 			return ret;
 		}
 
+		if (pl) {
+			track->use_playlist (DataType::AUDIO, pl);
+		}
+
 		if (track->set_state (node, version)) {
 			return ret;
+		}
+
+		if (pl) {
+			pl->set_orig_track_id (track->id());
+			playlists()->update_orig_2X (ds_id, track->id());
 		}
 
 		BOOST_MARK_TRACK (track);
@@ -2311,7 +2345,7 @@ Session::get_sources_as_xml ()
 	XMLNode* node = new XMLNode (X_("Sources"));
 	Glib::Threads::Mutex::Lock lm (source_lock);
 
-	for (SourceMap::iterator i = sources.begin(); i != sources.end(); ++i) {
+	for (SourceMap::const_iterator i = sources.begin(); i != sources.end(); ++i) {
 		node->add_child_nocopy (i->second->get_state());
 	}
 
@@ -2398,7 +2432,7 @@ retry:
 			}
 
 			if (!no_questions_about_missing_files) {
-				user_choice = MissingFile (this, err.path, err.type).get_value_or (-1);
+				user_choice = MissingFile (this, err.path, err.type).value_or (-1);
 			} else {
 				user_choice = -2;
 			}
@@ -2431,7 +2465,7 @@ retry:
 
 				case 3:
 					no_questions_about_missing_files = true;
-					/* fallthru */
+					/* fallthrough */
 
 				case -1:
 				default:
@@ -2457,7 +2491,7 @@ retry:
 								return -1;
 							}
 							/* Note that we do not announce the source just yet - we need to reset its ID before we do that */
-							source = SourceFactory::createWritable (DataType::MIDI, *this, fullpath, false, _current_sample_rate, false, false);
+							source = SourceFactory::createWritable (DataType::MIDI, *this, fullpath, _current_sample_rate, false, false);
 							/* reset ID to match the missing one */
 							source->set_id (**niter);
 							/* Now we can announce it */
@@ -2516,31 +2550,25 @@ Session::save_template (const string& template_name, const string& description, 
 		template_dir_path = template_name;
 	}
 
-	if (!ARDOUR::Profile->get_trx()) {
-		if (!replace_existing && Glib::file_test (template_dir_path, Glib::FILE_TEST_EXISTS)) {
-			warning << string_compose(_("Template \"%1\" already exists - new version not created"),
-									  template_dir_path) << endmsg;
-			return -2;
-		}
+	if (!replace_existing && Glib::file_test (template_dir_path, Glib::FILE_TEST_EXISTS)) {
+		warning << string_compose(_("Template \"%1\" already exists - new version not created"),
+		                          template_dir_path) << endmsg;
+		return -2;
+	}
 
-		if (g_mkdir_with_parents (template_dir_path.c_str(), 0755) != 0) {
-			error << string_compose(_("Could not create directory for Session template\"%1\" (%2)"),
-									template_dir_path, g_strerror (errno)) << endmsg;
-			return -1;
-		}
+	if (g_mkdir_with_parents (template_dir_path.c_str(), 0755) != 0) {
+		error << string_compose(_("Could not create directory for Session template\"%1\" (%2)"),
+		                        template_dir_path, g_strerror (errno)) << endmsg;
+		return -1;
 	}
 
 	/* file to write */
 	std::string template_file_path;
 
-	if (ARDOUR::Profile->get_trx()) {
-		template_file_path = template_name;
+	if (absolute_path) {
+		template_file_path = Glib::build_filename (template_dir_path, Glib::path_get_basename (template_dir_path) + template_suffix);
 	} else {
-		if (absolute_path) {
-			template_file_path = Glib::build_filename (template_dir_path, Glib::path_get_basename (template_dir_path) + template_suffix);
-		} else {
-			template_file_path = Glib::build_filename (template_dir_path, template_name + template_suffix);
-		}
+		template_file_path = Glib::build_filename (template_dir_path, template_name + template_suffix);
 	}
 
 	SessionSaveUnderway (); /* EMIT SIGNAL */
@@ -3245,7 +3273,7 @@ int
 Session::ask_about_playlist_deletion (boost::shared_ptr<Playlist> p)
 {
 	boost::optional<int> r = AskAboutPlaylistDeletion (p);
-	return r.get_value_or (1);
+	return r.value_or (1);
 }
 
 void
@@ -3357,7 +3385,7 @@ Session::cleanup_sources (CleanupReport& rep)
 {
 	// FIXME: needs adaptation to midi
 
-	vector<boost::shared_ptr<Source> > dead_sources;
+	SourceList dead_sources;
 	string audio_path;
 	string midi_path;
 	vector<string> candidates;
@@ -3372,6 +3400,8 @@ Session::cleanup_sources (CleanupReport& rep)
 	set<boost::shared_ptr<Source> > sources_used_by_this_snapshot;
 
 	_state_of_the_state = StateOfTheState (_state_of_the_state | InCleanup);
+
+	Glib::Threads::Mutex::Lock ls (source_lock, Glib::Threads::NOT_LOCK);
 
 	/* this is mostly for windows which doesn't allow file
 	 * renaming if the file is in use. But we don't special
@@ -3400,6 +3430,7 @@ Session::cleanup_sources (CleanupReport& rep)
 	rep.paths.clear ();
 	rep.space = 0;
 
+	ls.acquire ();
 	for (SourceMap::iterator i = sources.begin(); i != sources.end(); ) {
 
 		SourceMap::iterator tmp;
@@ -3411,13 +3442,13 @@ Session::cleanup_sources (CleanupReport& rep)
 		 * capture files.
 		 */
 
-		if (!i->second->used() && (i->second->length(i->second->timeline_position()) > 0)) {
+		if (!i->second->used() && (i->second->length(i->second->natural_position()) > 0)) {
 			dead_sources.push_back (i->second);
-			i->second->drop_references ();
 		}
 
 		i = tmp;
 	}
+	ls.release ();
 
 	/* build a list of all the possible audio directories for the session */
 
@@ -3458,6 +3489,7 @@ Session::cleanup_sources (CleanupReport& rep)
 	/*  add our current source list
 	*/
 
+	ls.acquire ();
 	for (SourceMap::iterator i = sources.begin(); i != sources.end(); ) {
 		boost::shared_ptr<FileSource> fs;
 		SourceMap::iterator tmp = i;
@@ -3505,11 +3537,20 @@ Session::cleanup_sources (CleanupReport& rep)
 				 * reference to it.
 				 */
 
+				dead_sources.push_back (i->second);
 				sources.erase (i);
 			}
 		}
 
 		i = tmp;
+	}
+	ls.release ();
+
+	for (SourceList::iterator i = dead_sources.begin(); i != dead_sources.end(); ++i) {
+		/* The following triggers Region::source_deleted (), which
+		 * causes regions to drop the given source */
+		(*i)->drop_references ();
+		SourceRemoved (*i); /* EMIT SIGNAL */
 	}
 
 	/* now check each candidate source to see if it exists in the list of
@@ -3643,7 +3684,10 @@ Session::cleanup_sources (CleanupReport& rep)
 		rep.space += statbuf.st_size;
 	}
 
-	/* dump the history list */
+	/* drop last Source references */
+	dead_sources.clear ();
+
+	/* dump the history list, remove references */
 
 	_history.clear ();
 
@@ -3667,9 +3711,6 @@ Session::cleanup_trash_sources (CleanupReport& rep)
 
 	vector<space_and_path>::iterator i;
 	string dead_dir;
-
-	rep.paths.clear ();
-	rep.space = 0;
 
 	for (i = session_dirs.begin(); i != session_dirs.end(); ++i) {
 
@@ -3799,11 +3840,6 @@ Session::save_history (string snapshot_name)
 	        return 0;
 	}
 
-	if (!Config->get_save_history() || Config->get_saved_history_depth() < 0 ||
-	    (_history.undo_depth() == 0 && _history.redo_depth() == 0)) {
-		return 0;
-	}
-
 	if (snapshot_name.empty()) {
 		snapshot_name = _current_snapshot_name;
 	}
@@ -3818,6 +3854,11 @@ Session::save_history (string snapshot_name)
 			error << _("could not backup old history file, current history not saved") << endmsg;
 			return -1;
 		}
+	}
+
+	if (!Config->get_save_history() || Config->get_saved_history_depth() < 0 ||
+	    (_history.undo_depth() == 0 && _history.redo_depth() == 0)) {
+		return 0;
 	}
 
 	tree.set_root (&_history.get_state (Config->get_saved_history_depth()));
@@ -3972,8 +4013,15 @@ Session::config_changed (std::string p, bool ours)
 
 	} else if (p == "punch-in") {
 
-		Location* location;
+		if (!punch_is_possible ()) {
+			if (config.get_punch_in ()) {
+				/* force off */
+				config.set_punch_in (false);
+				return;
+			}
+		}
 
+		Location* location;
 		if ((location = _locations->auto_punch_location()) != 0) {
 
 			if (config.get_punch_in ()) {
@@ -3985,8 +4033,15 @@ Session::config_changed (std::string p, bool ours)
 
 	} else if (p == "punch-out") {
 
-		Location* location;
+		if (!punch_is_possible ()) {
+			if (config.get_punch_out ()) {
+				/* force off */
+				config.set_punch_out (false);
+				return;
+			}
+		}
 
+		Location* location;
 		if ((location = _locations->auto_punch_location()) != 0) {
 
 			if (config.get_punch_out()) {
@@ -4108,7 +4163,6 @@ Session::config_changed (std::string p, bool ours)
 		first_file_data_format_reset = false;
 
 	} else if (p == "external-sync") {
-		std::cerr << "param change, rss to " << TransportMasterManager::instance().current() << std::endl;
 		request_sync_source (TransportMasterManager::instance().current());
 	}  else if (p == "denormal-model") {
 		setup_fpu ();
@@ -4130,7 +4184,7 @@ Session::config_changed (std::string p, bool ours)
 		}
 	} else if (p == "solo-mute-override") {
 		// catch_up_on_solo_mute_override ();
-	} else if (p == "listen-position" || p == "pfl-position") {
+	} else if (p == "listen-position" || p == "pfl-position" || p == "afl-position") {
 		listen_position_changed ();
 	} else if (p == "solo-control-is-listen-control") {
 		solo_control_mode_changed ();
@@ -4145,7 +4199,9 @@ Session::config_changed (std::string p, bool ours)
 	} else if (p == "timecode-generator-offset") {
 		ltc_tx_parse_offset();
 	} else if (p == "auto-return-target-list") {
-		follow_playhead_priority ();
+		if (!loading()) {
+			follow_playhead_priority ();
+		}
 	} else if (p == "use-monitor-bus") {
 		/* NB. This is always called when constructing a session,
 		 * after restoring session state (if any),
@@ -4175,6 +4231,9 @@ Session::config_changed (std::string p, bool ours)
 				remove_monitor_section ();
 			}
 		}
+	} else if (p == "loop-fade-choice") {
+		last_loopend = 0; /* force locate to refill buffers with new loop boundary data */
+		auto_loop_changed (_locations->auto_loop_location());
 	}
 
 	set_dirty ();
@@ -4476,6 +4535,9 @@ Session::rename (const std::string& new_name)
 
 	store_recent_sessions (new_name, _path);
 
+	/* remove unnamed file name, if any (it's not an error if it doesn't exist) */
+	::g_unlink (unnamed_file_name().c_str());
+
 	return 0;
 }
 
@@ -4545,6 +4607,12 @@ Session::get_info_from_path (const string& xmlpath, float& sample_rate, SampleFo
 
 	if ((parse_stateful_loading_version(version) / 1000L) > (CURRENT_SESSION_FILE_VERSION / 1000L)) {
 		return -1;
+	}
+
+	if ((parse_stateful_loading_version(version) / 1000L) <= 2) {
+		/* sample-format '0' is implicit */
+		data_format = FormatFloat;
+		found_data_format = true;
 	}
 
 	node = node->children;
@@ -5570,7 +5638,7 @@ Session::undo (uint32_t n)
 	if (actively_recording()) {
 		return;
 	}
-
+	StateProtector stp (this);
 	_history.undo (n);
 }
 
@@ -5581,5 +5649,24 @@ Session::redo (uint32_t n)
 		return;
 	}
 
+	StateProtector stp (this);
 	_history.redo (n);
+}
+
+std::string
+Session::unnamed_file_name() const
+{
+	return Glib::build_filename (_path, X_(".unnamed"));
+}
+
+bool
+Session::unnamed() const
+{
+	return Glib::file_test (unnamed_file_name(), Glib::FILE_TEST_EXISTS);
+}
+
+void
+Session::end_unnamed_status () const
+{
+	::g_remove (unnamed_file_name().c_str());
 }

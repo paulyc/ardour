@@ -1,25 +1,26 @@
 /*
-    Copyright (C) 2018 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2018-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2018-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 #include <gtkmm/stock.h>
 
 #include "pbd/enumwriter.h"
 #include "pbd/i18n.h"
+#include "pbd/unwind.h"
 
 #include "temporal/time.h"
 
@@ -29,6 +30,7 @@
 #include "ardour/transport_master_manager.h"
 
 #include "widgets/tooltips.h"
+#include "widgets/ardour_icon.h"
 
 #include "gtkmm2ext/utils.h"
 #include "gtkmm2ext/gui_thread.h"
@@ -48,26 +50,45 @@ using namespace ArdourWidgets;
 TransportMastersWidget::TransportMastersWidget ()
 	: table (4, 13)
 	, add_button (_("Add a new Transport Master"))
+	, lost_sync_button (_("Keeping rolling if sync is lost"))
+	, ignore_active_change (false)
 {
+	midi_port_store = ListStore::create (port_columns);
+	audio_port_store = ListStore::create (port_columns);
+
+	AudioEngine::instance()->PortRegisteredOrUnregistered.connect (port_reg_connection, invalidator (*this),  boost::bind (&TransportMastersWidget::update_ports, this), gui_context());
+	update_ports ();
+
 	pack_start (table, PACK_EXPAND_WIDGET, 12);
 	pack_start (add_button, FALSE, FALSE);
+	pack_start (lost_sync_button, FALSE, FALSE, 12);
+
+	Config->ParameterChanged.connect (config_connection, invalidator (*this), boost::bind (&TransportMastersWidget::param_changed, this, _1), gui_context());
+	lost_sync_button.signal_toggled().connect (sigc::mem_fun (*this, &TransportMastersWidget::lost_sync_button_toggled));
+	lost_sync_button.set_active (Config->get_transport_masters_just_roll_when_sync_lost());
+	set_tooltip (lost_sync_button, string_compose (_("<b>When enabled</b>, if the signal from a transport master is lost, %1 will keep rolling at its current speed.\n"
+	                                                 "<b>When disabled</b>, loss of transport master sync causes %1 to stop"), PROGRAM_NAME));
 
 	add_button.signal_clicked ().connect (sigc::mem_fun (*this, &TransportMastersWidget::add_master));
 
-	col_title[0].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Use")));
+	col_title[0].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Select")));
 	col_title[1].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Name")));
 	col_title[2].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Type")));
-	col_title[3].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Format/\nBPM")));
+	col_title[3].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Format")));
 	col_title[4].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Current")));
 	col_title[5].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Last")));
-	col_title[6].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Timestamp")));
+	col_title[6].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Age")));
 	col_title[7].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Delta")));
 	col_title[8].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Collect")));
-	col_title[9].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Data Source")));
+	col_title[9].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Source")));
 	col_title[10].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Active\nCommands")));
 	col_title[11].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Clock\nSynced")));
 	col_title[12].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("29.97/\n30")));
 	col_title[13].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Remove")));
+
+	set_tooltip (col_title[10], _("Controls whether or not certain transport-related commands can be sent from the GUI or control "
+	                              "surfaces when this transport master is in use. The default is not to allow any such commands "
+	                              "when the master is in use."));
 
 	set_tooltip (col_title[12], _("<b>When enabled</b> the external timecode source is assumed to use 29.97 fps instead of 30000/1001.\n"
 	                              "SMPTE 12M-1999 specifies 29.97df as 30000/1001. The spec further mentions that "
@@ -76,6 +97,7 @@ TransportMastersWidget::TransportMastersWidget ()
 	                              "That is not the actual rate. However, some vendors use that rate - despite it being against the specs - "
 	                              "because the variant of using exactly 29.97 fps has zero timecode drift.\n"
 		             ));
+	set_tooltip (col_title[6], _("How long since the last full timestamp was received from this transport master"));
 
 	set_tooltip (col_title[11], string_compose (_("<b>When enabled</b> the external timecode source is assumed to be sample-clock synced to the audio interface\n"
 	                                              "being used by %1."), PROGRAM_NAME));
@@ -85,6 +107,8 @@ TransportMastersWidget::TransportMastersWidget ()
 	TransportMasterManager::instance().CurrentChanged.connect (current_connection, invalidator (*this), boost::bind (&TransportMastersWidget::current_changed, this, _1, _2), gui_context());
 	TransportMasterManager::instance().Added.connect (add_connection, invalidator (*this), boost::bind (&TransportMastersWidget::rebuild, this), gui_context());
 	TransportMasterManager::instance().Removed.connect (remove_connection, invalidator (*this), boost::bind (&TransportMastersWidget::rebuild, this), gui_context());
+
+	AudioEngine::instance()->Running.connect (engine_running_connection, invalidator (*this), boost::bind (&TransportMastersWidget::update_usability, this), gui_context());
 
 	rebuild ();
 }
@@ -212,7 +236,8 @@ TransportMastersWidget::rebuild ()
 		}
 
 		if (r->tm->removeable()) {
-			table.attach (r->remove_button, col, col+1, n, n+1); ++col;
+			table.attach (r->remove_button, col, col+1, n, n+1, SHRINK, EXPAND|FILL);
+			++col;
 		} else {
 			col++;
 		}
@@ -224,7 +249,7 @@ TransportMastersWidget::rebuild ()
 		r->use_button.signal_toggled().connect (sigc::mem_fun (*r, &TransportMastersWidget::Row::use_button_toggled));
 		r->collect_button.signal_toggled().connect (sigc::mem_fun (*r, &TransportMastersWidget::Row::collect_button_toggled));
 		r->request_options.signal_button_press_event().connect (sigc::mem_fun (*r, &TransportMastersWidget::Row::request_option_press), false);
-		r->remove_button.signal_clicked().connect (sigc::mem_fun (*r, &TransportMastersWidget::Row::remove_clicked));
+		r->remove_button.signal_clicked.connect (sigc::mem_fun (*r, &TransportMastersWidget::Row::remove_clicked));
 
 		if (ttm) {
 			r->sclock_synced_button.signal_toggled().connect (sigc::mem_fun (*r, &TransportMastersWidget::Row::sync_button_toggled));
@@ -236,6 +261,7 @@ TransportMastersWidget::rebuild ()
 		all_change.add (Properties::locked);
 		all_change.add (Properties::collect);
 		all_change.add (Properties::connected);
+		all_change.add (Properties::allowed_transport_requests);
 
 		if (ttm) {
 			all_change.add (Properties::fr2997);
@@ -244,16 +270,62 @@ TransportMastersWidget::rebuild ()
 
 		r->prop_change (all_change);
 	}
+
+	update_usability ();
+}
+
+bool
+TransportMastersWidget::idle_remove (TransportMastersWidget::Row* row)
+{
+	TransportMasterManager::instance().remove (row->tm->name());
+	return false;
+}
+
+void
+TransportMastersWidget::update_ports ()
+{
+	if (!is_mapped()) {
+		return;
+	}
+
+	{
+		PBD::Unwinder<bool> uw (ignore_active_change, true);
+		vector<string> inputs;
+
+		ARDOUR::AudioEngine::instance()->get_ports ("", ARDOUR::DataType::MIDI, ARDOUR::PortFlags (ARDOUR::IsOutput), inputs);
+		build_port_model (midi_port_store, inputs);
+
+		inputs.clear ();
+
+		ARDOUR::AudioEngine::instance()->get_ports ("", ARDOUR::DataType::AUDIO, ARDOUR::PortFlags (ARDOUR::IsOutput), inputs);
+		build_port_model (audio_port_store, inputs);
+	}
+
+	for (vector<Row*>::iterator r = rows.begin(); r != rows.end(); ++r) {
+		if ((*r)->tm->port()) {
+			(*r)->build_port_list ((*r)->tm->port()->type());
+		}
+	}
+}
+
+void
+TransportMastersWidget::update_usability ()
+{
+	for (vector<Row*>::iterator r= rows.begin(); r != rows.end(); ++r) {
+		const bool usable = (*r)->tm->usable();
+		(*r)->use_button.set_sensitive (usable);
+		(*r)->collect_button.set_sensitive (usable);
+		(*r)->request_options.set_sensitive (usable);
+	}
 }
 
 TransportMastersWidget::Row::Row (TransportMastersWidget& p)
 	: parent (p)
 	, request_option_menu (0)
-	, remove_button (X_("x"))
 	, name_editor (0)
 	, save_when (0)
-	, ignore_active_change (false)
 {
+	remove_button.set_icon (ArdourIcon::CloseCross);
 }
 
 TransportMastersWidget::Row::~Row ()
@@ -272,16 +344,54 @@ TransportMastersWidget::Row::name_press (GdkEventButton* ev)
 		name_editor = new FloatingTextEntry (toplevel, tm->name());
 		name_editor->use_text.connect (sigc::mem_fun (*this, &TransportMastersWidget::Row::name_edited));
 		name_editor->show ();
+
+		/* Now move the floating text entry window to be perfectly
+		 * aligned with the upper left corner of the name/label box.
+		 */
+
+		Gtk::Widget* tl = label_box.get_toplevel();
+		Gtk::Window* top_level = dynamic_cast<Gtk::Window*>(tl);
+
+		if (top_level) {
+			Glib::RefPtr<Gdk::Window> win (top_level->get_window());
+			int rx, ry;
+			win->get_position (rx, ry);
+			Gtk::Allocation alloc = label_box.get_allocation();
+			name_editor->move (rx + alloc.get_x(), ry + alloc.get_y());
+		}
+
 		return true;
 	}
+
 	return false;
 }
 
-bool
-TransportMastersWidget::idle_remove (TransportMastersWidget::Row* row)
+void
+TransportMastersWidget::build_port_model (Glib::RefPtr<Gtk::ListStore> model, vector<string> const & ports)
 {
-	TransportMasterManager::instance().remove (row->tm->name());
-	return false;
+	TreeModel::Row row;
+
+	model->clear ();
+
+	row = *model->append ();
+	row[port_columns.full_name] = string();
+	row[port_columns.short_name] = _("Disconnected");
+
+	for (vector<string>::const_iterator p = ports.begin(); p != ports.end(); ++p) {
+
+		if (AudioEngine::instance()->port_is_mine (*p)) {
+			continue;
+		}
+
+		row = *model->append ();
+		row[port_columns.full_name] = *p;
+
+		std::string pn = ARDOUR::AudioEngine::instance()->get_pretty_name_by_name (*p);
+		if (pn.empty ()) {
+			pn = (*p).substr ((*p).find (':') + 1);
+		}
+		row[port_columns.short_name] = pn;
+	}
 }
 
 void
@@ -325,6 +435,10 @@ TransportMastersWidget::Row::prop_change (PropertyChange what_changed)
 
 	if (what_changed.contains (Properties::name)) {
 		label.set_text (tm->name());
+	}
+
+	if (what_changed.contains (Properties::allowed_transport_requests)) {
+		request_options.set_text (tm->allowed_request_string());
 	}
 }
 
@@ -376,41 +490,26 @@ TransportMastersWidget::Row::build_request_options ()
 
 	MenuList& items (request_option_menu->items());
 
-	items.push_back (CheckMenuElem (_("Accept speed-changing commands (start/stop)")));
+	items.push_back (CheckMenuElem (_("Accept start/stop commands")));
 	Gtk::CheckMenuItem* i = dynamic_cast<Gtk::CheckMenuItem *> (&items.back ());
+	i->set_active (tm->request_mask() & TR_StartStop);
+	i->signal_activate().connect (sigc::bind (sigc::mem_fun (*this, &TransportMastersWidget::Row::mod_request_type), TR_StartStop));
+
+	items.push_back (CheckMenuElem (_("Accept speed-changing commands")));
+	i = dynamic_cast<Gtk::CheckMenuItem *> (&items.back ());
 	i->set_active (tm->request_mask() & TR_Speed);
+	i->signal_activate().connect (sigc::bind (sigc::mem_fun (*this, &TransportMastersWidget::Row::mod_request_type), TR_Speed));
+
 	items.push_back (CheckMenuElem (_("Accept locate commands")));
 	i = dynamic_cast<Gtk::CheckMenuItem *> (&items.back ());
 	i->set_active (tm->request_mask() & TR_Locate);
+	i->signal_activate().connect (sigc::bind (sigc::mem_fun (*this, &TransportMastersWidget::Row::mod_request_type), TR_Locate));
 }
 
-Glib::RefPtr<Gtk::ListStore>
-TransportMastersWidget::Row::build_port_list (vector<string> const & ports)
+void
+TransportMastersWidget::Row::mod_request_type (TransportRequestType t)
 {
-	Glib::RefPtr<Gtk::ListStore> store = ListStore::create (port_columns);
-	TreeModel::Row row;
-
-	row = *store->append ();
-	row[port_columns.full_name] = string();
-	row[port_columns.short_name] = _("Disconnected");
-
-	for (vector<string>::const_iterator p = ports.begin(); p != ports.end(); ++p) {
-
-		if (AudioEngine::instance()->port_is_mine (*p)) {
-			continue;
-		}
-
-		row = *store->append ();
-		row[port_columns.full_name] = *p;
-
-		std::string pn = ARDOUR::AudioEngine::instance()->get_pretty_name_by_name (*p);
-		if (pn.empty ()) {
-			pn = (*p).substr ((*p).find (':') + 1);
-		}
-		row[port_columns.short_name] = pn;
-	}
-
-	return store;
+	tm->set_request_mask (TransportRequestType ((tm->request_mask() & t) ? (tm->request_mask() & ~t) : (tm->request_mask() | t)));
 }
 
 void
@@ -423,17 +522,19 @@ TransportMastersWidget::Row::populate_port_combo ()
 		port_combo.show ();
 	}
 
-	vector<string> inputs;
+	build_port_list (tm->port()->type());
+}
 
-	if (tm->port()->type() == DataType::MIDI) {
-		ARDOUR::AudioEngine::instance()->get_ports ("", ARDOUR::DataType::MIDI, ARDOUR::PortFlags (ARDOUR::IsOutput), inputs);
-	} else {
-		ARDOUR::AudioEngine::instance()->get_ports ("", ARDOUR::DataType::AUDIO, ARDOUR::PortFlags (ARDOUR::IsOutput), inputs);
-	}
-
-	Glib::RefPtr<Gtk::ListStore> input = build_port_list (inputs);
+void
+TransportMastersWidget::Row::build_port_list (DataType type)
+{
+	Glib::RefPtr<Gtk::ListStore> input = (type == DataType::MIDI ? parent.midi_port_store : parent.audio_port_store);
 	bool input_found = false;
 	int n;
+
+	if (input->children().empty()) {
+		return;
+	}
 
 	port_combo.set_model (input);
 
@@ -442,9 +543,8 @@ TransportMastersWidget::Row::populate_port_combo ()
 	i = children.begin();
 	++i; /* skip "Disconnected" */
 
-
 	for (n = 1;  i != children.end(); ++i, ++n) {
-		string port_name = (*i)[port_columns.full_name];
+		string port_name = (*i)[parent.port_columns.full_name];
 		if (tm->port()->connected_to (port_name)) {
 			port_combo.set_active (n);
 			input_found = true;
@@ -460,12 +560,16 @@ TransportMastersWidget::Row::populate_port_combo ()
 void
 TransportMastersWidget::Row::port_choice_changed ()
 {
-	if (ignore_active_change) {
+	if (!tm->port()) {
+		return;
+	}
+
+	if (parent.ignore_active_change) {
 		return;
 	}
 
 	TreeModel::iterator active = port_combo.get_active ();
-	string new_port = (*active)[port_columns.full_name];
+	string new_port = (*active)[parent.port_columns.full_name];
 
 	if (new_port.empty()) {
 		tm->port()->disconnect_all ();
@@ -509,22 +613,31 @@ TransportMastersWidget::Row::update (Session* s, samplepos_t now)
 				last.set_text (Timecode::timecode_format_time (l));
 			} else if ((mtm = boost::dynamic_pointer_cast<MIDIClock_TransportMaster> (tm))) {
 				char buf[8];
-				snprintf (buf, sizeof (buf), "%.1f", mtm->bpm());
+				snprintf (buf, sizeof (buf), "%.1fBPM", mtm->bpm());
 				format.set_text (buf);
 				last.set_text ("");
 			} else {
 				format.set_text ("");
 				last.set_text ("");
 			}
+
 			current.set_text (Timecode::timecode_format_time (t));
-			delta.set_markup (tm->delta_string ());
+
+			if (TransportMasterManager::instance().current() == tm) {
+				delta.set_markup (tm->delta_string ());
+			} else {
+				delta.set_markup ("");
+			}
 
 			char gap[32];
-			const float seconds = (when - now) / (float) AudioEngine::instance()->sample_rate();
+			float seconds = (when - now) / (float) AudioEngine::instance()->sample_rate();
+			if (seconds < 0.) {
+				seconds = 0.;
+			}
 			if (abs (seconds) < 1.0) {
-				snprintf (gap, sizeof (gap), "%.3fs", seconds);
+				snprintf (gap, sizeof (gap), "%-.03fs", seconds);
 			} else if (abs (seconds) < 4.0) {
-				snprintf (gap, sizeof (gap), "%ds", (int) floor (seconds));
+				snprintf (gap, sizeof (gap), "%-3ds", (int) floor (seconds));
 			} else {
 				snprintf (gap, sizeof (gap), "%s", _(">4s ago"));
 			}
@@ -538,9 +651,9 @@ TransportMastersWidget::Row::update (Session* s, samplepos_t now)
 
 				const float seconds = (when - now) / (float) AudioEngine::instance()->sample_rate();
 				if (abs (seconds) < 1.0) {
-					snprintf (gap, sizeof (gap), "%.3fs", seconds);
+					snprintf (gap, sizeof (gap), "%-.3fs", seconds);
 				} else if (abs (seconds) < 4.0) {
-					snprintf (gap, sizeof (gap), "%ds", (int) floor (seconds));
+					snprintf (gap, sizeof (gap), "%-2ds", (int) floor (seconds));
 				} else {
 					snprintf (gap, sizeof (gap), "%s", _(">4s ago"));
 				}
@@ -568,6 +681,7 @@ TransportMastersWidget::on_map ()
 {
 	update_connection = ARDOUR_UI::Clock.connect (sigc::mem_fun (*this, &TransportMastersWidget::update));
 	Gtk::VBox::on_map ();
+	update_ports ();
 }
 
 void
@@ -657,4 +771,25 @@ TransportMastersWidget::AddTransportMasterDialog::get_type() const
 	}
 
 	return LTC;
+}
+
+void
+TransportMastersWidget::lost_sync_changed ()
+{
+	lost_sync_button.set_active (Config->get_transport_masters_just_roll_when_sync_lost());
+}
+
+void
+TransportMastersWidget::lost_sync_button_toggled ()
+{
+	bool active = lost_sync_button.get_active ();
+	Config->set_transport_masters_just_roll_when_sync_lost (active);
+}
+
+void
+TransportMastersWidget::param_changed (string const & p)
+{
+	if (p == "transport-masters-just_roll-when-sync-lost") {
+		lost_sync_changed ();
+	}
 }

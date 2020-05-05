@@ -1,21 +1,35 @@
 /*
-    Copyright (C) 2000-2003 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2006 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2005-2007 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2005-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2005 Karsten Wiese <fzuuzf@googlemail.com>
+ * Copyright (C) 2006-2009 Sampo Savolainen <v2@iki.fi>
+ * Copyright (C) 2006-2015 David Robillard <d@drobilla.net>
+ * Copyright (C) 2006-2017 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2008-2011 Sakari Bergen <sakari.bergen@beatwaves.net>
+ * Copyright (C) 2008 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2013-2015 Colin Fletcher <colin.m.fletcher@googlemail.com>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2014-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2014-2019 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2015-2019 Damien Zammit <damien@zamaudio.com>
+ * Copyright (C) 2015 André Nusser <andre.nusser@googlemail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_editor_h__
 #define __ardour_editor_h__
@@ -110,6 +124,7 @@ class EditorCursor;
 class EditorGroupTabs;
 class EditorLocations;
 class EditorRegions;
+class EditorSources;
 class EditorRoutes;
 class EditorRouteGroups;
 class EditorSnapshots;
@@ -151,6 +166,8 @@ public:
 
 	void             first_idle ();
 	virtual bool     have_idled () const { return _have_idled; }
+
+	bool pending_locate_request() const { return _pending_locate_request; }
 
 	samplepos_t leftmost_sample() const { return _leftmost_sample; }
 
@@ -252,6 +269,7 @@ public:
 	Selection& get_cut_buffer() const { return *cut_buffer; }
 
 	void set_selection (std::list<Selectable*>, Selection::Operation);
+	void set_selected_midi_region_view (MidiRegionView&);
 
 	bool extend_selection_to_track (TimeAxisView&);
 
@@ -387,6 +405,8 @@ public:
 
 	void select_topmost_track ();
 
+	void cleanup_regions ();
+
 	void prepare_for_cleanup ();
 	void finish_cleanup ();
 
@@ -472,9 +492,16 @@ public:
 	void abort_reversible_command ();
 	void commit_reversible_command ();
 
+	MixerStrip* get_current_mixer_strip () const {
+		return current_mixer_strip;
+	}
+
 	DragManager* drags () const {
 		return _drags;
 	}
+
+	bool drag_active () const;
+	bool preview_video_drag_active () const;
 
 	void maybe_autoscroll (bool, bool, bool);
 	bool autoscroll_active() const;
@@ -748,6 +775,7 @@ private:
 	void catch_vanishing_regionview (RegionView*);
 
 	void set_selected_track (TimeAxisView&, Selection::Operation op = Selection::Set, bool no_remove=false);
+	void select_all_visible_lanes ();
 	void select_all_tracks ();
 	bool select_all_internal_edit (Selection::Operation);
 
@@ -1182,6 +1210,7 @@ private:
 
 	void register_actions ();
 	void register_region_actions ();
+	void register_midi_actions (Gtkmm2ext::Bindings*);
 
 	void load_bindings ();
 
@@ -1236,6 +1265,7 @@ private:
 	void align_regions_relative (ARDOUR::RegionPoint point);
 	void align_region (boost::shared_ptr<ARDOUR::Region>, ARDOUR::RegionPoint point, samplepos_t position);
 	void align_region_internal (boost::shared_ptr<ARDOUR::Region>, ARDOUR::RegionPoint point, samplepos_t position);
+	void recover_regions (ARDOUR::RegionList);
 	void remove_selected_regions ();
 	void remove_clicked_region ();
 	void show_region_properties ();
@@ -1282,8 +1312,6 @@ private:
 	void define_one_bar (samplepos_t start, samplepos_t end);
 
 	void audition_region_from_region_list ();
-	void hide_region_from_region_list ();
-	void show_region_in_region_list ();
 
 	void naturalize_region ();
 
@@ -1320,7 +1348,7 @@ private:
 	void temporal_zoom_by_sample (samplepos_t start, samplepos_t end);
 	void temporal_zoom_to_sample (bool coarser, samplepos_t sample);
 
-	void insert_region_list_selection (float times);
+	void insert_source_list_selection (float times);
 
 	/* import & embed */
 
@@ -1401,12 +1429,17 @@ private:
 	/* import specific info */
 
 	struct EditorImportStatus : public ARDOUR::ImportStatus {
-	    Editing::ImportMode mode;
-	    samplepos_t pos;
-	    int target_tracks;
-	    int target_regions;
-	    boost::shared_ptr<ARDOUR::Track> track;
-	    bool replace;
+		void clear () {
+			ARDOUR::ImportStatus::clear ();
+			track.reset ();
+		}
+
+		Editing::ImportMode mode;
+		samplepos_t pos;
+		int target_tracks;
+		int target_regions;
+		boost::shared_ptr<ARDOUR::Track> track;
+		bool replace;
 	};
 
 	EditorImportStatus import_status;
@@ -1440,6 +1473,11 @@ private:
 	void toggle_skip_playback ();
 
 	void remove_last_capture ();
+
+	void tag_last_capture ();
+	void tag_selected_region ();
+	void tag_regions (ARDOUR::RegionList);
+
 	void select_all_selectables_using_time_selection ();
 	void select_all_selectables_using_loop();
 	void select_all_selectables_using_punch();
@@ -1471,6 +1509,9 @@ private:
 	bool do_remove_location_at_playhead_cursor ();
 	void remove_location_at_playhead_cursor ();
 	bool select_new_marker;
+
+	void toggle_all_existing_automation ();
+	void toggle_layer_display ();
 
 	void reverse_selection ();
 	void edit_envelope ();
@@ -1530,7 +1571,6 @@ private:
 	std::set<boost::shared_ptr<ARDOUR::Playlist> > motion_frozen_playlists;
 
 	bool _dragging_playhead;
-	bool _dragging_edit_point;
 
 	void marker_drag_motion_callback (GdkEvent*);
 	void marker_drag_finished_callback (GdkEvent*);
@@ -1606,6 +1646,7 @@ private:
 	friend class DragManager;
 	friend class EditorRouteGroups;
 	friend class EditorRegions;
+	friend class EditorSources;
 
 	/* non-public event handlers */
 
@@ -1843,6 +1884,7 @@ private:
 	void update_time_selection_display ();
 	void presentation_info_changed (PBD::PropertyChange const &);
 	void region_selection_changed ();
+	void catch_up_on_midi_selection ();
 	sigc::connection editor_regions_selection_changed_connection;
 	void sensitize_all_region_actions (bool);
 	void sensitize_the_right_region_actions (bool because_canvas_crossing);
@@ -1895,6 +1937,7 @@ private:
 	EditorRouteGroups* _route_groups;
 	EditorRoutes*      _routes;
 	EditorRegions*     _regions;
+	EditorSources*     _sources;
 	EditorSnapshots*   _snapshots;
 	EditorLocations*   _locations;
 
@@ -1971,7 +2014,8 @@ private:
 	        gint                                  y,
 	        const Gtk::SelectionData&             data,
 	        guint                                 info,
-	        guint                                 time);
+	        guint                                 time,
+	        bool                                  from_region_list);
 
 	void drop_routes (
 	        const Glib::RefPtr<Gdk::DragContext>& context,
@@ -2283,6 +2327,9 @@ private:
 
 	QuantizeDialog* quantize_dialog;
 	MainMenuDisabler* _main_menu_disabler;
+
+	/* MIDI actions, proxied to selected MidiRegionView(s) */
+	void midi_action (void (MidiRegionView::*method)());
 
 	/* private helper functions to help with registering region actions */
 

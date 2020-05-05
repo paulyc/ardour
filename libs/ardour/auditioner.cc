@@ -1,21 +1,24 @@
 /*
-    Copyright (C) 2001 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2001-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2014-2018 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2019 Ben Loftis <ben@harrisonconsoles.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <glibmm/threads.h>
 
@@ -132,7 +135,9 @@ Auditioner::load_synth (bool need_lock)
 	unload_synth(need_lock);
 	
 	boost::shared_ptr<Plugin> p = audition_synth_info->load (_session);
-	asynth = boost::shared_ptr<Processor> (new PluginInsert (_session, p));
+	if (p) {
+		asynth = boost::shared_ptr<Processor> (new PluginInsert (_session, p));
+	}
 }
 
 void
@@ -140,10 +145,9 @@ Auditioner::unload_synth (bool need_lock)
 {
 	if (asynth) {
 		asynth->drop_references ();
+		remove_processor (asynth, NULL, need_lock);
 	}
-	if (0 == remove_processor (asynth, NULL, need_lock)) {
-		asynth.reset ();
-	}
+	asynth.reset ();
 }
 
 int
@@ -394,6 +398,18 @@ Auditioner::audition_region (boost::shared_ptr<Region> region)
 	}
 
 	_disk_reader->seek (offset, true);
+
+	if (_midi_audition) {
+		/* Fill MIDI buffers.
+		 * This is safe to call from here. ::::audition_region()
+		 * is called by the butler thread. Also the session is not
+		 * yet auditioning. So Session::non_realtime_overwrite()
+		 * does call the auditioner's DR.
+		 */
+		set_pending_overwrite (PlaylistModified);
+		_disk_reader->overwrite_existing_buffers ();
+	}
+
 	current_sample = offset;
 
 	g_atomic_int_set (&_auditioning, 1);
@@ -424,7 +440,12 @@ Auditioner::play_audition (samplecnt_t nframes)
 		_seek_complete = false;
 		_seeking = false;
 		_seek_sample = -1;
-		_disk_reader->reset_tracker();
+		if (_midi_audition) {
+			/* Force MIDI note tracker to resolve any notes that are
+			 * still playing -> set DR::run_must_resolve */
+			_disk_reader->set_pending_overwrite (PlaylistModified);
+			_disk_reader->overwrite_existing_buffers ();
+		}
 	}
 
 	if(!_seeking) {

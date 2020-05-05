@@ -1,3 +1,21 @@
+/*
+ * Copyright (C) 2015-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
 #include <iostream>
 #include <cstdlib>
 #include <getopt.h>
@@ -18,6 +36,8 @@
 #include "ardour/route.h"
 #include "ardour/session_metadata.h"
 #include "ardour/broadcast_info.h"
+
+#include "pbd/i18n.h"
 
 using namespace std;
 using namespace ARDOUR;
@@ -71,7 +91,7 @@ static int export_session (Session *session,
 
 	XMLTree tree;
 
-	tree.read_buffer(std::string(
+	tree.read_buffer(std::string (
 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
 "<ExportFormatSpecification name=\"UTIL-WAV-EXPORT\" id=\"b1280899-0459-4aef-9dc9-7e2277fa6d24\">"
 "  <Encoding id=\"F_WAV\" type=\"T_Sndfile\" extension=\"wav\" name=\"WAV\" has-sample-format=\"true\" channel-limit=\"256\"/>"
@@ -102,7 +122,7 @@ static int export_session (Session *session,
 "    </Silence>"
 "  </Processing>"
 "</ExportFormatSpecification>"
-));
+	).c_str());
 
 	boost::shared_ptr<ExportFormatSpecification> fmp = session->get_export_handler()->add_format(*tree.root());
 
@@ -183,13 +203,13 @@ static int export_session (Session *session,
 	}
 	printf("\n");
 
-	status->finish ();
+	status->finish (TRS_UI);
 
 	printf ("* Done.\n");
 	return 0;
 }
 
-static void usage (int status) {
+static void usage () {
 	// help2man compatible format (standard GNU help-text)
 	printf (UTILNAME " - export an ardour session from the commandline.\n\n");
 	printf ("Usage: " UTILNAME " [ OPTIONS ] <session-dir> <session/snapshot-name>\n\n");
@@ -213,7 +233,7 @@ Note: the tool expects a session-name without .ardour file-name extension.\n\
 
 	printf ("Report bugs to <http://tracker.ardour.org/>\n"
 	        "Website: <http://ardour.org/>\n");
-	::exit (status);
+	::exit (EXIT_SUCCESS);
 }
 
 int main (int argc, char* argv[])
@@ -254,7 +274,7 @@ int main (int argc, char* argv[])
 							settings._sample_format = ExportFormatBase::SF_Float;
 							break;
 						}
-						/* fall through */
+						/* fallthrough */
 					default:
 						fprintf(stderr, "Invalid Bit Depth\n");
 						break;
@@ -287,21 +307,23 @@ int main (int argc, char* argv[])
 			case 'V':
 				printf ("ardour-utils version %s\n\n", VERSIONSTRING);
 				printf ("Copyright (C) GPL 2015,2017 Robin Gareus <robin@gareus.org>\n");
-				exit (0);
+				exit (EXIT_SUCCESS);
 				break;
 
 			case 'h':
-				usage (0);
+				usage ();
 				break;
 
 			default:
-					usage (EXIT_FAILURE);
-					break;
+				cerr << "Error: unrecognized option. See --help for usage information.\n";
+				::exit (EXIT_FAILURE);
+				break;
 		}
 	}
 
 	if (optind + 2 > argc) {
-		usage (EXIT_FAILURE);
+		cerr << "Error: Missing parameter. See --help for usage information.\n";
+		::exit (EXIT_FAILURE);
 	}
 
 	SessionUtils::init(false);

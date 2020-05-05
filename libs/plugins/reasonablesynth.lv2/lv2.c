@@ -1,20 +1,19 @@
-/* reasonable simple synth
- *
- * Copyright (C) 2013 Robin Gareus <robin@gareus.org>
+/*
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2, or (at your option)
- * any later version.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 #define _GNU_SOURCE
@@ -100,16 +99,10 @@ instantiate (const LV2_Descriptor*     descriptor,
 	self->synth = synth_alloc();
 	synth_init(self->synth, rate);
 
-#ifndef PLATFORM_WINDOWS // easter egg is for sane platforms with native support for localtime_r only
-	struct tm date;
-	time_t now;
-	time(&now);
-	localtime_r(&now, &date);
-	if (getenv("ITSXMAS") || (date.tm_mon == 11 /*dec*/ && date.tm_mday == 25)) {
+	if (getenv("ITSXMAS")) {
 		printf("reasonable synth.lv2 says: happy holidays!\n");
 		self->xmas = true;
 	}
-#endif
 
 	return (LV2_Handle)self;
 }

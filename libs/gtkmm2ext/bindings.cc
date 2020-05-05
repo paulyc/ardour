@@ -1,21 +1,22 @@
 /*
-  Copyright (C) 2012 Paul Davis
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2010-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2015-2018 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2017 Ben Loftis <ben@harrisonconsoles.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <iostream>
 
@@ -493,8 +494,13 @@ Bindings::activate (KeyboardKey kb, Operation op)
 
 	if (action) {
 		/* lets do it ... */
-		DEBUG_TRACE (DEBUG::Bindings, string_compose ("binding for %1: %2\n", unshifted, k->second.action_name));
-		action->activate ();
+		if (action->get_sensitive()) {
+			DEBUG_TRACE (DEBUG::Bindings, string_compose ("binding for %1: %2\n", unshifted, k->second.action_name));
+			action->activate ();
+		} else {
+			DEBUG_TRACE (DEBUG::Bindings, string_compose ("binding for %1: %2 - insensitive, skipped\n", unshifted, k->second.action_name));
+			return false;
+		}
 	} else {
 		DEBUG_TRACE (DEBUG::Bindings, string_compose ("binding for %1 is known but has no action\n", unshifted));
 	}
@@ -582,7 +588,10 @@ bool
 Bindings::replace (KeyboardKey kb, Operation op, string const & action_name, bool can_save)
 {
 	if (is_registered(op, action_name)) {
-		remove (op, action_name, can_save);
+		/* never save after the remove, because if can_save is true, we
+		   will save after we add the new binding.
+		*/
+		remove (op, action_name, false);
 	}
 
 	/* XXX need a way to get the old group name */
@@ -607,8 +616,8 @@ Bindings::add (KeyboardKey kb, Operation op, string const& action_name, XMLPrope
 		(void) kbm.insert (new_pair).first;
 	}
 
-	DEBUG_TRACE (DEBUG::Bindings, string_compose ("add binding between %1 and %2, group [%3]\n",
-	                                              kb, action_name, (group ? group->value() : string())));
+	DEBUG_TRACE (DEBUG::Bindings, string_compose ("add binding between %1 (%3) and %2, group [%3]\n",
+	                                              kb, action_name, (group ? group->value() : string()), op));
 
 	if (can_save) {
 		Keyboard::keybindings_changed ();
@@ -623,6 +632,7 @@ Bindings::remove (Operation op, std::string const& action_name, bool can_save)
 {
 	bool erased_action = false;
 	KeybindingMap& kbm = get_keymap (op);
+
 	for (KeybindingMap::iterator k = kbm.begin(); k != kbm.end(); ++k) {
 		if (k->second.action_name == action_name) {
 			kbm.erase (k);
@@ -1053,10 +1063,17 @@ Bindings::associate_all ()
 }
 
 bool
-Bindings::is_bound (KeyboardKey const& kb, Operation op) const
+Bindings::is_bound (KeyboardKey const& kb, Operation op, std::string* path) const
 {
 	const KeybindingMap& km = get_keymap(op);
-	return km.find(kb) != km.end();
+	KeybindingMap::const_iterator i = km.find (kb);
+	if (i != km.end()) {
+		if (path) {
+			*path = i->second.action_name;
+		}
+		return true;
+	}
+	return false;
 }
 
 std::string
@@ -1064,10 +1081,17 @@ Bindings::bound_name (KeyboardKey const& kb, Operation op) const
 {
 	const KeybindingMap& km = get_keymap(op);
 	KeybindingMap::const_iterator b = km.find(kb);
+
 	if (b == km.end()) {
-		return "";
+		return string();
 	}
-	return b->second.action_name;
+
+	if (!b->second.action) {
+		/* action is looked up lazily, so it may not have been set yet */
+		b->second.action = ActionManager::get_action (b->second.action_name, false);
+	}
+
+	return b->second.action->get_label ();
 }
 
 bool

@@ -1,21 +1,21 @@
 /*
-    Copyright (C) 2009-2016 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2017-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2017-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include "pbd/debug.h"
 #include "pbd/error.h"
@@ -35,6 +35,7 @@
 #include "ardour/rc_configuration.h"
 #include "ardour/session.h"
 #include "ardour/session_playlists.h"
+#include "ardour/track.h"
 
 #include "pbd/i18n.h"
 
@@ -50,7 +51,6 @@ const string DiskIOProcessor::state_node_name = X_("DiskIOProcessor");
 DiskIOProcessor::DiskIOProcessor (Session& s, string const & str, Flag f)
 	: Processor (s, str)
 	, _flags (f)
-	, i_am_the_modifier (false)
 	, _slaved (false)
 	, in_set_state (false)
 	, playback_sample (0)
@@ -187,13 +187,13 @@ DiskIOProcessor::configure_io (ChanCount in, ChanCount out)
 	}
 
 	if (in.n_midi() > 0 && !_midi_buf) {
-		const size_t size = _session.butler()->midi_diskstream_buffer_size();
+		const size_t size = _session.butler()->midi_buffer_size();
 		_midi_buf = new MidiRingBuffer<samplepos_t>(size);
 		changed = true;
 	}
 
 	if (changed) {
-		seek (_session.transport_sample());
+		configuration_changed ();
 	}
 
 	return Processor::configure_io (in, out);
@@ -342,18 +342,18 @@ DiskIOProcessor::ChannelInfo::~ChannelInfo ()
 }
 
 void
-DiskIOProcessor::drop_route ()
+DiskIOProcessor::drop_track ()
 {
-	_route.reset ();
+	_track.reset ();
 }
 
 void
-DiskIOProcessor::set_route (boost::shared_ptr<Route> r)
+DiskIOProcessor::set_track (boost::shared_ptr<Track> t)
 {
-	_route = r;
+	_track = t;
 
-	if (_route) {
-		_route->DropReferences.connect_same_thread (*this, boost::bind (&DiskIOProcessor::drop_route, this));
+	if (_track) {
+		_track->DropReferences.connect_same_thread (*this, boost::bind (&DiskIOProcessor::drop_track, this));
 	}
 }
 

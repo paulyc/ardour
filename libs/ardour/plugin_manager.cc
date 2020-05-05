@@ -1,21 +1,27 @@
 /*
-    Copyright (C) 2000-2006 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2000-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2005-2006 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2006-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2012-2015 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2014-2018 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2018 Ben Loftis <ben@harrisonconsoles.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifdef WAF_BUILD
 #include "libardour-config.h"
@@ -258,6 +264,79 @@ PluginManager::~PluginManager()
 	}
 }
 
+struct PluginInfoPtrNameSorter {
+	bool operator () (PluginInfoPtr const& a, PluginInfoPtr const& b) const {
+		return PBD::downcase (a->name) < PBD::downcase (b->name);
+	}
+};
+
+void
+PluginManager::detect_name_ambiguities (PluginInfoList* pil)
+{
+	if (!pil) {
+		return;
+	}
+	pil->sort (PluginInfoPtrNameSorter ());
+
+	for (PluginInfoList::iterator i = pil->begin(); i != pil->end();) {
+		 PluginInfoPtr& p = *i;
+		 ++i;
+		 if (i != pil->end() && (*i)->name == p->name) {
+			 /* mark name as ambiguous IFF ambiguity can be resolved
+				* by listing number of audio outputs.
+				* This is used in the instrument selector.
+				*/
+			 bool r = p->max_configurable_ouputs () != (*i)->max_configurable_ouputs ();
+			 p->multichannel_name_ambiguity = r;
+			 (*i)->multichannel_name_ambiguity = r;
+		 }
+	}
+}
+
+void
+PluginManager::detect_type_ambiguities (PluginInfoList& pil)
+{
+	PluginInfoList dup;
+	pil.sort (PluginInfoPtrNameSorter ());
+	for (PluginInfoList::iterator i = pil.begin(); i != pil.end(); ++i) {
+		switch (dup.size ()) {
+			case 0:
+				break;
+			case 1:
+				if (dup.back()->name != (*i)->name) {
+					dup.clear ();
+				}
+				break;
+			default:
+				if (dup.back()->name != (*i)->name) {
+					/* found multiple plugins with same name */
+					bool typediff = false;
+					bool chandiff = false;
+					for (PluginInfoList::iterator j = dup.begin(); j != dup.end(); ++j) {
+						if (dup.front()->type != (*j)->type) {
+							typediff = true;
+						}
+						chandiff |= (*j)->multichannel_name_ambiguity;
+					}
+					if (typediff) {
+						for (PluginInfoList::iterator j = dup.begin(); j != dup.end(); ++j) {
+							(*j)->plugintype_name_ambiguity = true;
+							/* show multi-channel information for consistency, when other types display it.
+							 * eg. "Foo 8 outs, VST", "Foo 12 outs, VST", "Foo <=12 outs, AU"
+							 */
+							if (chandiff) {
+								(*j)->multichannel_name_ambiguity = true;
+							}
+						}
+					}
+					dup.clear ();
+				}
+				break;
+		}
+		dup.push_back (*i);
+	}
+}
+
 void
 PluginManager::refresh (bool cache_only)
 {
@@ -366,6 +445,40 @@ PluginManager::refresh (bool cache_only)
 	PluginListChanged (); /* EMIT SIGNAL */
 	PluginScanMessage(X_("closeme"), "", false);
 	_cancel_scan = false;
+
+	BootMessage (_("Indexing Plugins..."));
+
+	detect_name_ambiguities (_windows_vst_plugin_info);
+	detect_name_ambiguities (_lxvst_plugin_info);
+	detect_name_ambiguities (_mac_vst_plugin_info);
+	detect_name_ambiguities (_au_plugin_info);
+	detect_name_ambiguities (_ladspa_plugin_info);
+	detect_name_ambiguities (_lv2_plugin_info);
+	detect_name_ambiguities (_lua_plugin_info);
+
+	PluginInfoList all_plugs;
+	if (_windows_vst_plugin_info) {
+		all_plugs.insert(all_plugs.end(), _windows_vst_plugin_info->begin(), _windows_vst_plugin_info->end());
+	}
+	if (_lxvst_plugin_info) {
+		all_plugs.insert(all_plugs.end(), _lxvst_plugin_info->begin(), _lxvst_plugin_info->end());
+	}
+	if (_mac_vst_plugin_info) {
+		all_plugs.insert(all_plugs.end(), _mac_vst_plugin_info->begin(), _mac_vst_plugin_info->end());
+	}
+	if (_au_plugin_info) {
+		all_plugs.insert(all_plugs.end(), _au_plugin_info->begin(), _au_plugin_info->end());
+	}
+	if (_ladspa_plugin_info) {
+		all_plugs.insert(all_plugs.end(), _ladspa_plugin_info->begin(), _ladspa_plugin_info->end());
+	}
+	if (_lv2_plugin_info) {
+		all_plugs.insert(all_plugs.end(), _lv2_plugin_info->begin(), _lv2_plugin_info->end());
+	}
+	if (_lua_plugin_info) {
+		all_plugs.insert(all_plugs.end(), _lua_plugin_info->begin(), _lua_plugin_info->end());
+	}
+	detect_type_ambiguities (all_plugs);
 }
 
 void
@@ -758,7 +871,8 @@ PluginManager::ladspa_discover (string path)
 			set_tags (info->type, info->unique_id, info->category, info->name, FromPlug);
 		}
 
-		DEBUG_TRACE (DEBUG::PluginManager, string_compose ("Found LADSPA plugin, name: %1, Inputs: %2, Outputs: %3\n", info->name, info->n_inputs, info->n_outputs));
+		DEBUG_TRACE (DEBUG::PluginManager, string_compose ("Found LADSPA plugin, id: %1 name: %2, Inputs: %3, Outputs: %4\n",
+					info->unique_id, info->name, info->n_inputs, info->n_outputs));
 	}
 
 	return 0;
@@ -881,6 +995,10 @@ PluginManager::windows_vst_refresh (bool cache_only)
 	}
 
 	windows_vst_discover_from_path (Config->get_plugin_path_vst(), cache_only);
+	if (!cache_only) {
+		/* ensure that VST path is flushed to disk */
+		Config->save_state();
+	}
 }
 
 static bool windows_vst_filter (const string& str, void * /*arg*/)
@@ -1071,6 +1189,10 @@ PluginManager::mac_vst_refresh (bool cache_only)
 	}
 
 	mac_vst_discover_from_path ("~/Library/Audio/Plug-Ins/VST:/Library/Audio/Plug-Ins/VST", cache_only);
+	if (!cache_only) {
+		/* ensure that VST path is flushed to disk */
+		Config->save_state();
+	}
 }
 
 static bool mac_vst_filter (const string& str)
@@ -1192,6 +1314,10 @@ PluginManager::lxvst_refresh (bool cache_only)
 	}
 
 	lxvst_discover_from_path (Config->get_plugin_path_lxvst(), cache_only);
+	if (!cache_only) {
+		/* ensure that VST path is flushed to disk */
+		Config->save_state();
+	}
 }
 
 static bool lxvst_filter (const string& str, void *)
@@ -1542,8 +1668,6 @@ PluginManager::save_plugin_order_file (XMLNode &elem) const
 {
 	std::string path = Glib::build_filename (user_plugin_metadata_dir(), "plugin_order");
 
-	info << string_compose (_("Saving plugin order file %1"), path) << endmsg;
-
 	XMLTree tree;
 	tree.set_root (&elem);
 	if (!tree.write (path)) {
@@ -1568,8 +1692,8 @@ PluginManager::save_tags ()
 			}
 		}
 #endif
-		if ((*i).tagtype == FromFactoryFile || (*i).tagtype == FromUserFile) {
-			/* user file should contain only plugins that are (a) newly user-tagged or (b) previously unknown */
+		if ((*i).tagtype <= FromFactoryFile) {
+			/* user file should contain only plugins that are user-tagged */
 			continue;
 		}
 		XMLNode* node = new XMLNode (X_("Plugin"));
@@ -1577,9 +1701,7 @@ PluginManager::save_tags ()
 		node->set_property (X_("id"), (*i).unique_id);
 		node->set_property (X_("tags"), (*i).tags);
 		node->set_property (X_("name"), (*i).name);
-		if ((*i).tagtype >= FromUserFile) {
-			node->set_property (X_("user-set"), "1");
-		}
+		node->set_property (X_("user-set"), "1");
 		root->add_child_nocopy (*node);
 	}
 
@@ -1617,9 +1739,10 @@ PluginManager::load_tags ()
 			string name;
 			bool user_set;
 			if (!(*i)->get_property (X_("type"), type) ||
-					!(*i)->get_property (X_("id"), id) ||
-					!(*i)->get_property (X_("tags"), tags) ||
-					!(*i)->get_property (X_("name"), name)) {
+			    !(*i)->get_property (X_("id"), id) ||
+			    !(*i)->get_property (X_("tags"), tags) ||
+			    !(*i)->get_property (X_("name"), name)) {
+				continue;
 			}
 			if (!(*i)->get_property (X_("user-set"), user_set)) {
 				user_set = false;
@@ -1643,6 +1766,12 @@ PluginManager::set_tags (PluginType t, string id, string tag, std::string name, 
 		ptags.erase (ps);
 		ptags.insert (ps);
 	}
+	if (ttype == FromFactoryFile) {
+		if (find (ftags.begin(), ftags.end(), ps) != ftags.end()) {
+			ftags.erase (ps);
+		}
+		ftags.insert (ps);
+	}
 	if (ttype == FromGui) {
 		PluginTagChanged (t, id, sanitized); /* EMIT SIGNAL */
 	}
@@ -1653,10 +1782,16 @@ PluginManager::reset_tags (PluginInfoPtr const& pi)
 {
 	PluginTag ps (pi->type, pi->unique_id, pi->category, pi->name, FromPlug);
 
+	PluginTagList::const_iterator j = find (ftags.begin(), ftags.end(), ps);
+	if (j != ftags.end()) {
+		ps = *j;
+	}
+
 	PluginTagList::const_iterator i = find (ptags.begin(), ptags.end(), ps);
 	if (i != ptags.end()) {
 		ptags.erase (ps);
 		ptags.insert (ps);
+		PluginTagChanged (ps.type, ps.unique_id, ps.tags); /* EMIT SIGNAL */
 	}
 }
 

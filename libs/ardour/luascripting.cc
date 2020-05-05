@@ -1,20 +1,19 @@
 /*
- * Copyright (C) 2016 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2016-2019 Robin Gareus <robin@gareus.org>
  *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
- *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 #include <cstring>
 #include <glibmm.h>
@@ -28,6 +27,7 @@
 #include "ardour/luascripting.h"
 #include "ardour/lua_script_params.h"
 #include "ardour/search_paths.h"
+#include "ardour/utils.h"
 
 #include "lua/luastate.h"
 #include "LuaBridge/LuaBridge.h"
@@ -104,11 +104,10 @@ LuaScripting::refresh (bool run_scan)
 	}
 }
 
-struct ScriptSorter {
-	bool operator () (LuaScriptInfoPtr a, LuaScriptInfoPtr b) {
-		return a->name < b->name;
-	}
-};
+bool
+LuaScripting::Sorter::operator() (LuaScriptInfoPtr const a, LuaScriptInfoPtr const b) const {
+	return ARDOUR::cmp_nocase_utf8 (a->name, b->name) < 0;
+}
 
 LuaScriptInfoPtr
 LuaScripting::script_info (const std::string &script) {
@@ -166,13 +165,13 @@ LuaScripting::scan ()
 		}
 	}
 
-	std::sort (_sl_dsp->begin(), _sl_dsp->end(), ScriptSorter());
-	std::sort (_sl_session->begin(), _sl_session->end(), ScriptSorter());
-	std::sort (_sl_hook->begin(), _sl_hook->end(), ScriptSorter());
-	std::sort (_sl_action->begin(), _sl_action->end(), ScriptSorter());
-	std::sort (_sl_snippet->begin(), _sl_snippet->end(), ScriptSorter());
-	std::sort (_sl_setup->begin(), _sl_setup->end(), ScriptSorter());
-	std::sort (_sl_tracks->begin(), _sl_tracks->end(), ScriptSorter());
+	std::sort (_sl_dsp->begin(), _sl_dsp->end(), Sorter());
+	std::sort (_sl_session->begin(), _sl_session->end(), Sorter());
+	std::sort (_sl_hook->begin(), _sl_hook->end(), Sorter());
+	std::sort (_sl_action->begin(), _sl_action->end(), Sorter());
+	std::sort (_sl_snippet->begin(), _sl_snippet->end(), Sorter());
+	std::sort (_sl_setup->begin(), _sl_setup->end(), Sorter());
+	std::sort (_sl_tracks->begin(), _sl_tracks->end(), Sorter());
 
 	scripts_changed (); /* EMIT SIGNAL */
 }
@@ -217,16 +216,24 @@ LuaScripting::scan_script (const std::string &fn, const std::string &sc)
 		}
 		if (err) {
 #ifndef NDEBUG
-		cerr << "failed to load lua script\n";
+		cerr << "failed to load lua script fn: '"<< fn << "'\n";
 #endif
 			return LuaScriptInfoPtr();
 		}
-	} catch (...) { // luabridge::LuaException
+	} catch (luabridge::LuaException const& e) {
 #ifndef NDEBUG
-		cerr << "failed to parse lua script\n";
+		cerr << "Exception: Failed to parse lua script fn: '"<< fn << "' " << e.what () << "\n";
 #endif
+		PBD::warning << "Exception: Failed to parse lua script fn: '"<< fn << "' " << e.what () << "\n";
+		return LuaScriptInfoPtr();
+	} catch (...) {
+#ifndef NDEBUG
+		cerr << "Exception: Failed to parse lua script fn: '"<< fn << "'\n";
+#endif
+		PBD::warning << "Exception: Failed to parse lua script fn: '"<< fn << "'\n";
 		return LuaScriptInfoPtr();
 	}
+
 	luabridge::LuaRef nfo = luabridge::getGlobal (L, "ardourluainfo");
 	if (nfo.type() != LUA_TTABLE) {
 #ifndef NDEBUG
@@ -338,6 +345,17 @@ LuaScripting::scripts (LuaScriptInfo::ScriptType type) {
 	return _empty_script_info; // make some compilers happy
 }
 
+LuaScriptInfoPtr
+LuaScripting::by_name (const std::string& name, LuaScriptInfo::ScriptType type)
+{
+	LuaScriptList lsl (scripts (type));
+	for (LuaScriptList::const_iterator s = lsl.begin(); s != lsl.end(); ++s) {
+		if ((*s)->name == name) {
+			return (*s);
+		}
+	}
+	return LuaScriptInfoPtr();
+}
 
 std::string
 LuaScriptInfo::type2str (const ScriptType t) {

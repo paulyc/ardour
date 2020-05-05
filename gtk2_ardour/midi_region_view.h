@@ -1,20 +1,26 @@
 /*
-    Copyright (C) 2001-2011 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2006-2015 David Robillard <d@drobilla.net>
+ * Copyright (C) 2008-2012 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2008-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2015-2016 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2015-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2015-2017 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __gtk_ardour_midi_region_view_h__
 #define __gtk_ardour_midi_region_view_h__
@@ -125,13 +131,13 @@ public:
 	bool paste (samplepos_t pos, const ::Selection& selection, PasteContext& ctx, const int32_t sub_num);
 	void paste_internal (samplepos_t pos, unsigned paste_count, float times, const MidiCutBuffer&);
 
-	void add_canvas_patch_change (ARDOUR::MidiModel::PatchChangePtr patch, const std::string& displaytext, bool);
+	void add_canvas_patch_change (ARDOUR::MidiModel::PatchChangePtr patch);
 	void remove_canvas_patch_change (PatchChange* pc);
 
 	/** Look up the given time and channel in the 'automation' and set keys accordingly.
 	 * @param time the time of the patch change event
 	 * @param channel the MIDI channel of the event
-	 * @key a reference to an instance of MIDI::Name::PatchPrimaryKey whose fields will
+	 * @param key a reference to an instance of MIDI::Name::PatchPrimaryKey whose fields will
 	 *        will be set according to the result of the lookup
 	 */
 	void get_patch_key_at (Temporal::Beats time, uint8_t channel, MIDI::Name::PatchPrimaryKey& key) const;
@@ -155,6 +161,8 @@ public:
 	void delete_sysex (SysEx*);
 
 	/** Change a patch to the next or previous bank/program.
+	 *
+	 * @param patch The patch-change instance (canvas item)
 	 * @param bank If true, step bank, otherwise, step program.
 	 * @param delta Amount to adjust number.
 	 */
@@ -210,8 +218,11 @@ public:
 	void select_matching_notes (uint8_t notenum, uint16_t channel_mask, bool add, bool extend);
 	void toggle_matching_notes (uint8_t notenum, uint16_t channel_mask);
 
-	/** Return true iff the note is within the extent of the region.
+	/** Test if a note is within this region's range
+	 *
+	 * @param note the note to test
 	 * @param visible will be set to true if the note is within the visible note range, false otherwise.
+	 * @return true iff the note is within the (time) extent of the region.
 	 */
 	bool note_in_region_range(const boost::shared_ptr<NoteType> note, bool& visible) const;
 
@@ -344,10 +355,9 @@ public:
 
 	void note_deleted (NoteBase*);
 
-	void show_verbose_cursor_for_new_note_value(boost::shared_ptr<NoteType> current_note,
-	                                            uint8_t new_note) const;
+	void show_verbose_cursor_for_new_note_value(boost::shared_ptr<NoteType> current_note, uint8_t new_note) const;
 
-protected:
+  protected:
 	void region_resized (const PBD::PropertyChange&);
 
 	void set_flags (XMLNode *);
@@ -357,7 +367,59 @@ protected:
 
 	void parameter_changed (std::string const & p);
 
-private:
+  protected:
+	friend class Editor;
+
+	void clear_note_selection () { clear_selection_internal(); }
+
+	void move_note_starts_earlier_fine () { change_note_lengths (true, false, Temporal::Beats(), true, false); }
+	void move_note_starts_earlier () { change_note_lengths (false, false, Temporal::Beats(), true, false); }
+	void move_note_ends_later_fine () { change_note_lengths (true, false, Temporal::Beats(), false, true); }
+	void move_note_ends_later () { change_note_lengths (false, false, Temporal::Beats(), false, true); }
+	void move_note_starts_later_fine () { change_note_lengths (true, true, Temporal::Beats(), true, false); }
+	void move_note_starts_later () { change_note_lengths (false, true, Temporal::Beats(), true, false); }
+	void move_note_ends_earlier_fine () { change_note_lengths (true, true, Temporal::Beats(), false, true); }
+	void move_note_ends_earlier () { change_note_lengths (false, true, Temporal::Beats(), false, true); }
+
+	void select_next_note () { goto_next_note (false); }
+	void select_previous_note () { goto_previous_note (false); }
+	void add_select_next_note () { goto_next_note (true); }
+	void add_select_previous_note () { goto_previous_note (true); }
+
+	void increase_note_velocity ()                     { change_velocities (true, false, false, false); }
+	void increase_note_velocity_fine ()                { change_velocities (true, true, false, false); }
+	void increase_note_velocity_smush ()               { change_velocities (true, false, true, false); }
+	void increase_note_velocity_together ()            { change_velocities (true, false, false, true); }
+	void increase_note_velocity_fine_smush ()          { change_velocities (true, true, true, false); }
+	void increase_note_velocity_fine_together ()       { change_velocities (true, true, false, true); }
+	void increase_note_velocity_smush_together ()      { change_velocities (true, false, true, true); }
+	void increase_note_velocity_fine_smush_together () { change_velocities (true, true, true, true); }
+
+	void decrease_note_velocity ()                     { change_velocities (false, false, false, false); }
+	void decrease_note_velocity_fine ()                { change_velocities (false, true, false, false); }
+	void decrease_note_velocity_smush ()               { change_velocities (false, false, true, false); }
+	void decrease_note_velocity_together ()            { change_velocities (false, false, false, true); }
+	void decrease_note_velocity_fine_smush ()          { change_velocities (false, true, true, false); }
+	void decrease_note_velocity_fine_together ()       { change_velocities (false, true, false, true); }
+	void decrease_note_velocity_smush_together ()      { change_velocities (false, false, true, true); }
+	void decrease_note_velocity_fine_smush_together () { change_velocities (false, true, true, true); }
+
+	void transpose_up_octave () { transpose (true, false, false); }
+	void transpose_up_octave_smush () { transpose (true, false, true); }
+	void transpose_up_tone () { transpose (true, true, false); }
+	void transpose_up_tone_smush () { transpose (true, true, true); }
+
+	void transpose_down_octave () { transpose (false, false, false); }
+	void transpose_down_octave_smush () { transpose (false, false, true); }
+	void transpose_down_tone () { transpose (false, true, false); }
+	void transpose_down_tone_smush () { transpose (false, true, true); }
+
+	void nudge_notes_later () { nudge_notes (true, false); }
+	void nudge_notes_later_fine () { nudge_notes (true, true); }
+	void nudge_notes_earlier () { nudge_notes (false, false); }
+	void nudge_notes_earlier_fine () { nudge_notes (false, true); }
+
+  private:
 
 	friend class MidiRubberbandSelectDrag;
 	friend class MidiVerticalSelectDrag;
@@ -378,8 +440,6 @@ private:
 	/** Clear the note selection of just this midi region
 	 */
 	void clear_selection_internal ();
-
-	void clear_editor_note_selection ();
 
 	void clear_events ();
 
@@ -515,7 +575,6 @@ private:
 
 	double    _last_event_x;
 	double    _last_event_y;
-	bool      _grabbed_keyboard;
 	bool      _entered;
 	NoteBase* _entered_note;
 

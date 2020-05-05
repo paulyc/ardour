@@ -1,24 +1,26 @@
 /*
-    Copyright (C) 2008-2009 Paul Davis
-    Author: Sakari Bergen
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
-
-#include "ardour/export_handler.h"
+ * Copyright (C) 2008-2013 Sakari Bergen <sakari.bergen@beatwaves.net>
+ * Copyright (C) 2008-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2009-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2013-2015 Colin Fletcher <colin.m.fletcher@googlemail.com>
+ * Copyright (C) 2015-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015 Johannes Mueller <github@johannes-mueller.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include "pbd/gstdio_compat.h"
 #include <glibmm.h>
@@ -31,6 +33,7 @@
 #include "ardour/audio_port.h"
 #include "ardour/debug.h"
 #include "ardour/export_graph_builder.h"
+#include "ardour/export_handler.h"
 #include "ardour/export_timespan.h"
 #include "ardour/export_channel_configuration.h"
 #include "ardour/export_status.h"
@@ -169,6 +172,14 @@ ExportHandler::start_timespan ()
 {
 	export_status->timespan++;
 
+	/* stop freewheeling and wait for latency callbacks */
+	if (AudioEngine::instance()->freewheeling ()) {
+		AudioEngine::instance()->freewheel (false);
+		do {
+			Glib::usleep (AudioEngine::instance()->usecs_per_cycle ());
+		} while (AudioEngine::instance()->freewheeling ());
+	}
+
 	if (config_map.empty()) {
 		// freewheeling has to be stopped from outside the process cycle
 		export_status->set_running (false);
@@ -199,7 +210,6 @@ ExportHandler::start_timespan ()
 		spec.filename->set_timespan (it->first);
 		switch (spec.channel_config->region_processing_type ()) {
 			case RegionExportChannelFactory::None:
-			case RegionExportChannelFactory::Processed:
 				region_export = false;
 				break;
 			default:
@@ -263,10 +273,11 @@ ExportHandler::process (samplecnt_t samples)
 			// wait until we're freewheeling
 			return 0;
 		}
-	} else {
+	} else if (samples > 0) {
 		Glib::Threads::Mutex::Lock l (export_status->lock());
 		return process_timespan (samples);
 	}
+	return 0;
 }
 
 int
@@ -287,12 +298,13 @@ ExportHandler::process_timespan (samplecnt_t samples)
 		samples_to_read = samples;
 	}
 
-	process_position += samples_to_read;
-	export_status->processed_samples += samples_to_read;
-	export_status->processed_samples_current_timespan += samples_to_read;
-
 	/* Do actual processing */
-	int ret = graph_builder->process (samples_to_read, last_cycle);
+	samplecnt_t ret = graph_builder->process (samples_to_read, last_cycle);
+	if (ret > 0) {
+		process_position += ret;
+		export_status->processed_samples += ret;
+		export_status->processed_samples_current_timespan += ret;
+	}
 
 	/* Start post-processing/normalizing if necessary */
 	if (last_cycle) {
@@ -302,11 +314,11 @@ ExportHandler::process_timespan (samplecnt_t samples)
 			export_status->current_postprocessing_cycle = 0;
 		} else {
 			finish_timespan ();
-			return 0;
 		}
+		return 1; /* trigger realtime_stop() */
 	}
 
-	return ret;
+	return 0;
 }
 
 int
@@ -333,6 +345,16 @@ ExportHandler::command_output(std::string output, size_t size)
 {
 	std::cerr << "command: " << size << ", " << output << std::endl;
 	info << output << endmsg;
+}
+
+void*
+ExportHandler::start_timespan_bg (void* eh)
+{
+	ExportHandler* self = static_cast<ExportHandler*> (eh);
+	self->process_connection.disconnect ();
+	Glib::Threads::Mutex::Lock l (self->export_status->lock());
+	self->start_timespan ();
+	return 0;
 }
 
 void
@@ -471,7 +493,12 @@ ExportHandler::finish_timespan ()
 		config_map.erase (config_map.begin());
 	}
 
-	start_timespan ();
+	/* finish timespan is called in freewheeling rt-context,
+	 * we cannot start a new export from here */
+	assert (AudioEngine::instance()->freewheeling ());
+	pthread_t tid;
+	pthread_create (&tid, NULL, ExportHandler::start_timespan_bg, this);
+	pthread_detach (tid);
 }
 
 void
@@ -838,7 +865,7 @@ ExportHandler::write_index_info_toc (CDMarkerStatus & status)
 {
 	gchar buf[18];
 
-	samples_to_cd_frame_string (buf, status.index_position - status.track_position);
+	samples_to_cd_frame_string (buf, status.index_position - status.track_start_sample);
 	status.out << "INDEX" << buf << endl;
 }
 
@@ -956,6 +983,12 @@ ExportHandler::cue_escape_cdtext (const std::string& txt)
 	out = '"' + latin1_txt + '"';
 
 	return out;
+}
+
+ExportHandler::CDMarkerStatus::~CDMarkerStatus () {
+	if (!g_file_set_contents (path.c_str(), out.str().c_str(), -1, NULL)) {
+		PBD::error << string_compose(("Editor: cannot open \"%1\" as export file for CD marker file"), path) << endmsg;
+	}
 }
 
 } // namespace ARDOUR

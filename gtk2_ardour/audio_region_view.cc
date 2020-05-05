@@ -1,20 +1,27 @@
 /*
-    Copyright (C) 2001-2006 Paul Davis
-
-    This program is free software; you can r>edistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2006-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2007-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2007 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2014-2015 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2014-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015-2016 Tim Mayberry <mojofunk@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <cmath>
 #include <cassert>
@@ -34,7 +41,7 @@
 #include "pbd/memento_command.h"
 #include "pbd/stacktrace.h"
 
-#include "evoral/Curve.hpp"
+#include "evoral/Curve.h"
 
 #include "gtkmm2ext/gtk_ui.h"
 #include "gtkmm2ext/utils.h"
@@ -66,8 +73,6 @@
 #include "ui_config.h"
 
 #include "pbd/i18n.h"
-
-#define MUTED_ALPHA 48
 
 using namespace std;
 using namespace ARDOUR;
@@ -1151,9 +1156,14 @@ AudioRegionView::delete_waves ()
 
 	for (vector<ArdourWaveView::WaveView*>::iterator w = waves.begin(); w != waves.end(); ++w) {
 		group->remove(*w);
+		delete *w;
 	}
 	waves.clear();
-	tmp_waves.clear();
+
+	while (!tmp_waves.empty ()) {
+		delete tmp_waves.back ();
+		tmp_waves.pop_back ();
+	}
 	pending_peak_data->show ();
 }
 
@@ -1299,8 +1309,12 @@ AudioRegionView::create_one_wave (uint32_t which, bool /*direct*/)
 		/* all waves are ready */
 		tmp_waves.resize(nwaves);
 
-		waves = tmp_waves;
-		tmp_waves.clear ();
+		waves.swap(tmp_waves);
+
+		while (!tmp_waves.empty ()) {
+			delete tmp_waves.back ();
+			tmp_waves.pop_back ();
+		}
 
 		/* indicate peak-completed */
 		pending_peak_data->hide ();
@@ -1557,34 +1571,37 @@ AudioRegionView::set_waveform_colors ()
 void
 AudioRegionView::set_some_waveform_colors (vector<ArdourWaveView::WaveView*>& waves_to_color)
 {
-	Gtkmm2ext::Color fill;
-	Gtkmm2ext::Color outline;
+	Gtkmm2ext::Color fill = fill_color;
+	Gtkmm2ext::Color outline = fill;
+
 	Gtkmm2ext::Color clip = UIConfiguration::instance().color ("clipped waveform");
 	Gtkmm2ext::Color zero = UIConfiguration::instance().color ("zero line");
 
+	/* use track/region color to fill wform */
+	fill = fill_color;
+	fill = UINT_INTERPOLATE (fill, UIConfiguration::instance().color ("waveform fill"), 0.5);
+
+	/* set outline */
+	outline = fill;
+
 	if (_selected) {
-		if (_region->muted()) {
-			/* hide outline with zero alpha */
-			outline = UINT_RGBA_CHANGE_A(UIConfiguration::instance().color ("selected waveform outline"), 0);
-			fill = UINT_RGBA_CHANGE_A(UIConfiguration::instance().color ("selected waveform fill"), MUTED_ALPHA);
-		} else {
-			outline = UIConfiguration::instance().color ("selected waveform outline");
-			fill = UIConfiguration::instance().color ("selected waveform fill");
-		}
-	} else {
-		if (_recregion) {
-			outline = UIConfiguration::instance().color ("recording waveform outline");
-			fill = UIConfiguration::instance().color ("recording waveform fill");
-		} else {
-			if (_region->muted()) {
-				/* hide outline with zero alpha */
-				outline = UINT_RGBA_CHANGE_A(UIConfiguration::instance().color ("waveform outline"), 0);
-				fill = UINT_RGBA_CHANGE_A(UIConfiguration::instance().color ("waveform fill"), MUTED_ALPHA);
-			} else {
-				outline = UIConfiguration::instance().color ("waveform outline");
-				fill = UIConfiguration::instance().color ("waveform fill");
-			}
-		}
+		outline = UINT_RGBA_CHANGE_A(UIConfiguration::instance().color ("selected waveform outline"), 0xC0);
+		fill = UINT_RGBA_CHANGE_A(UIConfiguration::instance().color ("selected waveform fill"), 0xC0);
+	} else if (_dragging) {
+		outline = UINT_RGBA_CHANGE_A(UIConfiguration::instance().color ("waveform outline"), 0xC0);
+		fill = UINT_RGBA_CHANGE_A(UIConfiguration::instance().color ("waveform fill"), 0xC0);
+	} else if (_region->muted()) {
+		outline = UINT_RGBA_CHANGE_A(UIConfiguration::instance().color ("waveform fill"), 80);
+		fill = UINT_RGBA_CHANGE_A(UIConfiguration::instance().color ("waveform fill"), 0);
+	} else if (!_region->opaque()) {
+		outline = UINT_RGBA_CHANGE_A(UIConfiguration::instance().color ("waveform fill"), 70);
+		fill = UINT_RGBA_CHANGE_A(UIConfiguration::instance().color ("waveform fill"), 70);
+	}
+
+	/* recorded region, override to red */
+	if (_recregion) {
+		outline = UIConfiguration::instance().color ("recording waveform outline");
+		fill = UIConfiguration::instance().color ("recording waveform fill");
 	}
 
 	for (vector<ArdourWaveView::WaveView*>::iterator w = waves_to_color.begin(); w != waves_to_color.end(); ++w) {

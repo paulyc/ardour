@@ -1,21 +1,21 @@
 /*
-    Copyright (C) 2016 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2016 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2017 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_vca_time_axis_h__
 #define __ardour_vca_time_axis_h__
@@ -56,6 +56,10 @@ public:
 	bool marked_for_display () const;
 	bool set_marked_for_display (bool);
 
+	void show_all_automation (bool apply_to_selection = false);
+	void show_existing_automation (bool apply_to_selection = false);
+	void hide_all_automation (bool apply_to_selection = false);
+
 protected:
 	boost::shared_ptr<ARDOUR::VCA> _vca;
 	ArdourWidgets::ArdourButton    solo_button;
@@ -69,10 +73,6 @@ protected:
 	void create_gain_automation_child (const Evoral::Parameter &, bool);
 	void create_trim_automation_child (const Evoral::Parameter &, bool) {}
 	void create_mute_automation_child (const Evoral::Parameter &, bool);
-
-	virtual void show_all_automation (bool apply_to_selection = false);
-	virtual void show_existing_automation (bool apply_to_selection = false);
-	virtual void hide_all_automation (bool apply_to_selection = false);
 
 	void create_automation_child (const Evoral::Parameter& param, bool show);
 	virtual void build_automation_action_menu (bool);

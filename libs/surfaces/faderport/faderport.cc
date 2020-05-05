@@ -1,21 +1,22 @@
 /*
-    Copyright (C) 2015 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2015-2018 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2015-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2016-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <cstdlib>
 #include <sstream>
@@ -181,11 +182,7 @@ FaderPort::FaderPort (Session& s)
 	get_button (Loop).set_action (boost::bind (&BasicUI::add_marker, this, string()), true, ShiftDown);
 
 	get_button (Punch).set_action (boost::bind (&BasicUI::prev_marker, this), true, ShiftDown);
-#ifdef MIXBUS
 	get_button (User).set_action (boost::bind (&BasicUI::next_marker, this), true, ShiftDown);
-#else
-	get_button (User).set_action (boost::bind (&BasicUI::next_marker, this), true, ButtonState(ShiftDown|UserDown));
-#endif
 
 	get_button (Mute).set_action (boost::bind (&FaderPort::mute, this), true);
 	get_button (Solo).set_action (boost::bind (&FaderPort::solo, this), true);
@@ -365,14 +362,6 @@ FaderPort::button_handler (MIDI::Parser &, MIDI::EventTwoBytes* tb)
 	case Rewind:
 		bs = RewindDown;
 		break;
-#ifndef MIXBUS
-	case User:
-		bs = UserDown;
-		if (tb->value) {
-			start_press_timeout (button, id);
-		}
-		break;
-#endif
 	case FaderTouch:
 		fader_is_touched = tb->value;
 		if (_current_stripable) {
@@ -467,26 +456,12 @@ FaderPort::encoder_handler (MIDI::Parser &, MIDI::pitchbend_t pb)
 				trim->set_value (dB_to_coefficient (val), Controllable::UseGroup);
 			}
 		} else if (width_modifier && ((button_state & width_modifier) == width_modifier)) {
-			ardour_pan_width (delta);
+			pan_width (delta);
 
 		} else {  // pan/balance
-			if (!Profile->get_mixbus()) {
-				ardour_pan_azimuth (delta);
-			} else {
-				mixbus_pan (delta);
-			}
+			pan_azimuth (delta);
 		}
 	}
-
-#ifndef MIXBUS
-	/* if the user button was pressed, mark it as consumed so that its
-	 * release action has no effect.
-	 */
-
-	if (!Profile->get_mixbus() && (button_state & UserDown)) {
-		consumed.insert (User);
-	}
-#endif
 }
 
 void
@@ -710,7 +685,7 @@ FaderPort::map_transport_state ()
 {
 	get_button (Loop).set_led_state (_output_port, session->get_play_loop());
 
-	float ts = session->transport_speed();
+	float ts = get_transport_speed();
 
 	if (ts == 0) {
 		stop_blinking (Play);
@@ -721,9 +696,9 @@ FaderPort::map_transport_state ()
 		start_blinking (Play);
 	}
 
-	get_button (Stop).set_led_state (_output_port, session->transport_stopped ());
-	get_button (Rewind).set_led_state (_output_port, session->transport_speed() < 0.0);
-	get_button (Ffwd).set_led_state (_output_port, session->transport_speed() > 1.0);
+	get_button (Stop).set_led_state (_output_port, stop_button_onoff());
+	get_button (Rewind).set_led_state (_output_port, rewind_button_onoff ());
+	get_button (Ffwd).set_led_state (_output_port, ffwd_button_onoff());
 }
 
 void
@@ -972,7 +947,7 @@ FaderPort::Button::set_action (string const& name, bool when_pressed, FaderPort:
 		if (name.empty()) {
 			on_press.erase (bs);
 		} else {
-			DEBUG_TRACE (DEBUG::FaderPort, string_compose ("set button %1 to action %2 on press + %3%4%5\n", id, name, bs));
+			DEBUG_TRACE (DEBUG::FaderPort, string_compose ("set button %1 to action %2 on press + %3\n", id, name, bs));
 			todo.action_name = name;
 			on_press[bs] = todo;
 		}
@@ -980,16 +955,7 @@ FaderPort::Button::set_action (string const& name, bool when_pressed, FaderPort:
 		if (name.empty()) {
 			on_release.erase (bs);
 		} else {
-#ifndef MIXBUS
-			if (id == User) {
-				/* if the binding is for the User button, we
-				   need to store the button state as it will be
-				   seen on button release, which will include UserDown.
-				*/
-				bs = FaderPort::ButtonState (bs|UserDown);
-			}
-#endif
-			DEBUG_TRACE (DEBUG::FaderPort, string_compose ("set button %1 to action %2 on release + %3%4%5\n", id, name, bs));
+			DEBUG_TRACE (DEBUG::FaderPort, string_compose ("set button %1 to action %2 on release + %3\n", id, name, bs));
 			todo.action_name = name;
 			on_release[bs] = todo;
 		}
@@ -1101,11 +1067,6 @@ FaderPort::Button::get_state () const
 	state_pairs.push_back (make_pair (string ("plain"), ButtonState (0)));
 	state_pairs.push_back (make_pair (string ("shift"), ShiftDown));
 	state_pairs.push_back (make_pair (string ("long"), LongPress));
-
-#ifndef MIXBUS
-	state_pairs.push_back (make_pair (string ("plain"), UserDown));
-	state_pairs.push_back (make_pair (string ("long"), ButtonState (LongPress | UserDown)));
-#endif
 
 	for (vector<state_pair_t>::const_iterator sp = state_pairs.begin(); sp != state_pairs.end(); ++sp) {
 		if ((x = on_press.find (sp->second)) != on_press.end()) {

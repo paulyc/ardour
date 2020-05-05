@@ -1,21 +1,22 @@
 /*
-    Copyright (C) 2013 Paul Davis
-    Author: Robin Gareus
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2014-2016 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2015-2016 Tim Mayberry <mojofunk@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <list>
 
@@ -69,6 +70,8 @@ PBD::Signal0<void> MeterStrip::ConfigurationChanged;
 MeterStrip::MeterStrip (int metricmode, MeterType mt)
 	: RouteUI ((Session*) 0)
 	, metric_type (MeterPeak)
+	, _clear_meters (true)
+	, _meter_peaked (false)
 	, _has_midi (false)
 	, _tick_bar (0)
 	, _strip_type (0)
@@ -126,6 +129,8 @@ MeterStrip::MeterStrip (Session* sess, boost::shared_ptr<ARDOUR::Route> rt)
 	, RouteUI ((Session*) 0)
 	, _route (rt)
 	, metric_type (MeterPeak)
+	, _clear_meters (true)
+	, _meter_peaked (false)
 	, _has_midi (false)
 	, _tick_bar (0)
 	, _strip_type (0)
@@ -164,7 +169,6 @@ MeterStrip::MeterStrip (Session* sess, boost::shared_ptr<ARDOUR::Route> rt)
 	peak_display.set_name ("meterbridge peakindicator");
 	peak_display.set_elements((ArdourButton::Element) (ArdourButton::Edge|ArdourButton::Body));
 	set_tooltip (peak_display, _("Reset Peak"));
-	max_peak = minus_infinity();
 	peak_display.unset_flags (Gtk::CAN_FOCUS);
 	peak_display.set_size_request(PX_SCALE(12, 12), PX_SCALE(8, 8));
 	peak_display.set_corner_radius(2); // ardour-button scales this
@@ -416,12 +420,19 @@ MeterStrip::route_color_changed ()
 void
 MeterStrip::fast_update ()
 {
-	float mpeak = level_meter->update_meters();
-	if (mpeak > max_peak) {
-		max_peak = mpeak;
-		if (mpeak >= UIConfiguration::instance().get_meter_peak()) {
-			peak_display.set_active_state ( Gtkmm2ext::ExplicitActive );
-		}
+	if (_clear_meters) {
+		level_meter->clear_meters();
+		peak_display.set_active_state (Gtkmm2ext::Off);
+		_clear_meters = false;
+		_meter_peaked = false;
+	}
+
+	const float mpeak = level_meter->update_meters();
+	const bool peaking = mpeak > UIConfiguration::instance().get_meter_peak();
+
+	if (!_meter_peaked && peaking) {
+		peak_display.set_active_state ( Gtkmm2ext::ExplicitActive );
+		_meter_peaked = true;
 	}
 }
 
@@ -696,9 +707,7 @@ void
 MeterStrip::reset_peak_display ()
 {
 	_route->shared_peak_meter()->reset_max();
-	level_meter->clear_meters();
-	max_peak = -INFINITY;
-	peak_display.set_active_state ( Gtkmm2ext::Off );
+	_clear_meters = true;
 }
 
 bool
@@ -775,7 +784,7 @@ void
 MeterStrip::parameter_changed (std::string const & p)
 {
 	if (p == "meter-peak") {
-		max_peak = -INFINITY;
+		_clear_meters = true;
 	}
 	else if (p == "show-rec-on-meterbridge") {
 		update_button_box();

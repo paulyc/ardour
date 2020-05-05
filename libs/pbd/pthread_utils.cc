@@ -1,22 +1,22 @@
 /*
-    Copyright (C) 2002 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-    $Id$
-*/
+ * Copyright (C) 2002-2015 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2007-2009 David Robillard <d@drobilla.net>
+ * Copyright (C) 2015-2018 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <set>
 #include <string>
@@ -34,6 +34,12 @@ DECLARE_DEFAULT_COMPARISONS(pthread_t)  // Needed for 'DECLARE_DEFAULT_COMPARISO
                                         // if the type of object being contained has no appropriate comparison operators
                                         // defined (specifically, if operators '<' and '==' are undefined). This seems
                                         // to be the case with ptw32 'pthread_t' which is a simple struct.
+#endif
+
+#ifdef __APPLE__
+#include <mach/thread_policy.h>
+#include <mach/thread_act.h>
+#include <mach/mach_time.h>
 #endif
 
 using namespace std;
@@ -126,7 +132,7 @@ pthread_create_and_store (string name, pthread_t  *thread, void * (*start_routin
 
 	// set default stack size to sensible default for memlocking
 	pthread_attr_init(&default_attr);
-	pthread_attr_setstacksize(&default_attr, 500000);
+	pthread_attr_setstacksize(&default_attr, 0x80000); // 512kB
 
 	ThreadStartWithName* ts = new ThreadStartWithName (start_routine, arg, name);
 
@@ -147,6 +153,14 @@ pthread_set_name (const char *str)
 	/* copy string and delete it when exiting */
 
 	thread_name.set (strdup (str)); // leaks
+
+#if !defined PLATFORM_WINDOWS && defined _GNU_SOURCE
+	/* set public thread name, up to 16 chars */
+	char ptn[16];
+	memset (ptn, 0, 16);
+	strncpy (ptn, str, 15);
+	pthread_setname_np (pthread_self(), ptn);
+#endif
 }
 
 const char *
@@ -271,15 +285,15 @@ pbd_set_thread_priority (pthread_t thread, const int policy, int priority)
 bool
 pbd_mach_set_realtime_policy (pthread_t thread_id, double period_ns)
 {
-#ifdef _APPLE_
+#ifdef __APPLE__
 	thread_time_constraint_policy_data_t policy;
 #ifndef NDEBUG
 	mach_msg_type_number_t msgt = 4;
 	boolean_t dflt = false;
-	kern_return_t rv = thread_policy_get (pthread_mach_thread_np (_main_thread),
+	kern_return_t rv = thread_policy_get (pthread_mach_thread_np (thread_id),
 			THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t) &policy,
 			&msgt, &dflt);
-	printf ("Mach Thread(%p) %d %d %d %d DFLT %d OK: %d\n", _main_thread, policy.period, policy.computation, policy.constraint, policy.preemptible, dflt, rv == KERN_SUCCESS);
+	printf ("Mach Thread(%p) get: period=%d comp=%d constraint=%d preemt=%d OK: %d\n", thread_id, policy.period, policy.computation, policy.constraint, policy.preemptible, rv == KERN_SUCCESS);
 #endif
 
 	mach_timebase_info_data_t timebase_info;
@@ -295,7 +309,7 @@ pbd_mach_set_realtime_policy (pthread_t thread_id, double period_ns)
 			THREAD_TIME_CONSTRAINT_POLICY_COUNT);
 
 #ifndef NDEBUG
-	printf ("Mach Thread(%p) %d %d %d %d OK: %d\n", thread_id, policy.period, policy.computation, policy.constraint, policy.preemptible, res == KERN_SUCCESS);
+	printf ("Mach Thread(%p) set: period=%d comp=%d constraint=%d preemt=%d OK: %d\n", thread_id, policy.period, policy.computation, policy.constraint, policy.preemptible, res == KERN_SUCCESS);
 #endif
 	return res != KERN_SUCCESS;
 #endif

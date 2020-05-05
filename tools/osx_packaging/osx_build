@@ -14,7 +14,6 @@ if test -z "$CACHEDIR" -o ! -d "$CACHEDIR"; then
 fi
 mkdir -p "$CACHEDIR"
 
-SAE=
 MIXBUS=
 MIXBUS32C=
 WITH_HARVID=1
@@ -22,7 +21,7 @@ WITH_HARRISON_LV2=
 WITH_X42_LV2=
 STRIP=1
 PRINT_SYSDEPS=
-WITH_NLS=
+WITH_NLS=1
 
 : ${HARRISONCHANNELSTRIP=harrison_channelstrip}
 : ${HARRISONLV2=harrison_lv2s-n}
@@ -38,19 +37,9 @@ while [ $# -gt 0 ] ; do
 	# top level build targets
 	#
 
-	--sae)
-		SAE=1 ;
-		STRIP= ;
-		PRODUCT_PKG_DIR=ArdourSAE ;
-		APPNAME=Ardour ;
-		BUNDLENAME=Ardour${major_version} ;
-		lower_case_appname=ardour;
-		shift ;;
 	--mixbus) MIXBUS=1;
 		WITH_HARRISON_LV2=1 ;
 		WITH_X42_LV2=1 ;
-		WITH_NLS=1 ;
-		SAE= ;
 		STRIP= ;
 		PRODUCT_PKG_DIR=Mixbus;
 		APPNAME=Mixbus ;
@@ -61,8 +50,6 @@ while [ $# -gt 0 ] ; do
 		MIXBUS32C=1;
 		WITH_HARRISON_LV2=1 ;
 		WITH_X42_LV2=1 ;
-		WITH_NLS=1 ;
-		SAE= ;
 		STRIP= ;
 		PRODUCT_PKG_DIR=Mixbus32C;
 		lower_case_appname=mixbus32c;
@@ -70,7 +57,6 @@ while [ $# -gt 0 ] ; do
 		BUNDLENAME=Mixbus32C-${major_version} ;
 		shift ;;
 	--public)
-		SAE= ;
 		WITH_HARRISON_LV2=1 ;
 		WITH_X42_LV2=1 ;
 		PRODUCT_PKG_DIR=Ardour;
@@ -78,11 +64,6 @@ while [ $# -gt 0 ] ; do
 		BUNDLENAME=Ardour${major_version} ;
 		lower_case_appname=ardour;
 		shift ;;
-	--allinone) SAE= ;
-		STRIP= ;
-		PRODUCT_PKG_DIR=Ardour ;
-		shift ;;
-	--test) SAE= ; STRIP= ; shift ;;
 
 	#
 	# specific build flags
@@ -91,6 +72,7 @@ while [ $# -gt 0 ] ; do
 	--noharvid) WITH_HARVID= ; shift ;;
 	--nostrip) STRIP= ; shift ;;
 	--sysdeps) PRINT_SYSDEPS=1; shift ;;
+	--no-nls) WITH_NLS= ; shift ;;
 	--nls) WITH_NLS=1 ; shift ;;
 	--chanstrip) HARRISONCHANNELSTRIP=$2 ; shift; shift ;;
 	esac
@@ -145,6 +127,7 @@ ExportFormats=$Shared/export
 Templates=$Shared/templates
 PatchFiles=$Shared/patchfiles
 LuaScripts=$Shared/scripts
+WebSurfaces=$Shared/web_surfaces
 MackieControl=$Shared/mcp
 OSC=$Shared/osc
 Themes=$Shared/themes
@@ -224,23 +207,25 @@ cp -R Resources $APPROOT
 rm -f Info.plist
 rm -f Resources/InfoPlist.strings
 
-#
 # if we build a bundle without jack, then
 # make the Ardour executable a helper
 # script that checks to see if JACK is
 # installed.
 #
+#cp startup_script $APPROOT/MacOS/$EXECUTABLE
+#chmod 775 $APPROOT/MacOS/$EXECUTABLE
+#MAIN_EXECUTABLE=Ardour.bin  ## used in startup_script
 
-cp startup_script $APPROOT/MacOS/$EXECUTABLE
-chmod 775 $APPROOT/MacOS/$EXECUTABLE
-MAIN_EXECUTABLE=Ardour.bin  ## used in startup_script
+# For Catalina we cannot use a shell script wrapper
+# the binary mentioned in the .plist must match
+# the actual executable, otherwise the user is
+# not prompted to grant permissions to access the audio-device
+
+MAIN_EXECUTABLE=$EXECUTABLE
 
 echo "Copying ardour executable ...."
 cp $BUILD_ROOT/gtk2_ardour/ardour-$release_version $APPROOT/MacOS/$MAIN_EXECUTABLE
-if test x$SAE != x ; then
-	# cp $BUILD_ROOT/gtk2_ardour/evtest $APPROOT/MacOS/gtkevents
-	cp  Ardour3-SAE.icns $Resources/appIcon.icns
-elif test x$MIXBUS32C != x ; then
+if test x$MIXBUS32C != x ; then
 	cp  Mixbus32C.icns $Resources/appIcon.icns
 elif test x$MIXBUS != x ; then
 	cp  Mixbus.icns $Resources/appIcon.icns
@@ -337,36 +322,34 @@ cp $BUILD_ROOT/libs/surfaces/control_protocol/libardourcp*.dylib $Frameworks
 cp $BUILD_ROOT/libs/panners/*/lib*.dylib $Panners
 
 # Backends
-for backend in jack wavesaudio dummy coreaudio; do
-	cp $BUILD_ROOT/libs/backends/$backend/lib*.dylib $Backends
-done
+cp $BUILD_ROOT/libs/backends/*/lib*.dylib $Backends
 
 # Export Formats/Presets
-for f in $BUILD_ROOT/../export/*.preset $BUILD_ROOT/../export/*.format ; do
+for f in $BUILD_ROOT/../share/export/*.preset $BUILD_ROOT/../share/export/*.format ; do
 	cp "$f" $ExportFormats ;
 done
 
 #Session templates
-cp -av $BUILD_ROOT/../templates $Templates
+cp -av $BUILD_ROOT/../share/templates $Templates
 
 # PluginMetadata
-cp -av $BUILD_ROOT/../plugin_metadata $PluginMetadata
+cp -av $BUILD_ROOT/../share/plugin_metadata $PluginMetadata
 
 # MidiMaps
 # got to be careful with names here
-for x in $BUILD_ROOT/../midi_maps/*.map ; do
+for x in $BUILD_ROOT/../share/midi_maps/*.map ; do
 	cp "$x" $MidiMaps
 done
 
 # MIDNAM Patch Files
 # got to be careful with names here
-for x in $BUILD_ROOT/../patchfiles/*.midnam ; do
+for x in $BUILD_ROOT/../share/patchfiles/*.midnam ; do
 	cp "$x" $PatchFiles
 done
 
 # Lua Script Files
 # got to be careful with names here
-for x in $BUILD_ROOT/../scripts/*.lua ; do
+for x in $BUILD_ROOT/../share/scripts/*.lua ; do
 	BN=$(basename $x)
 	if test "${BN:0:1}" = "_"; then
 		continue;
@@ -374,15 +357,19 @@ for x in $BUILD_ROOT/../scripts/*.lua ; do
 	cp "$x" $LuaScripts
 done
 
+# recusively copy web-surface html/js
+cp -a $BUILD_ROOT/../share/web_surfaces $WebSurfaces
+rm $WebSurfaces/wscript
+
 # MackieControl data
 # got to be careful with names here
-for x in $BUILD_ROOT/../mcp/*.device $BUILD_ROOT/../mcp/*.profile ; do
+for x in $BUILD_ROOT/../share/mcp/*.device $BUILD_ROOT/../share/mcp/*.profile ; do
 	cp "$x" $MackieControl
 done
 
 # OSC data
 # got to be careful with names here
-for x in $BUILD_ROOT/../osc/*.preset ; do
+for x in $BUILD_ROOT/../share/osc/*.preset ; do
 	cp "$x" $OSC
 done
 
@@ -394,6 +381,7 @@ done
 
 # VAMP plugins that we use
 cp $BUILD_ROOT/libs/vamp-plugins/libardourvampplugins.dylib $Frameworks
+cp $BUILD_ROOT/libs/vamp-pyin/libardourvamppyin.dylib $Frameworks
 
 # Suil modules (new dir 'build-stack')
 if test -d $GTKSTACK_ROOT/lib/suil-0/ ; then
@@ -428,9 +416,9 @@ for file in $BUILD_ROOT/session_utils/${lower_case_appname}${major_version}-*; d
 	HAVE_SESSION_UTILS=true
 done
 
-if test -x $BUILD_ROOT/tools/luadevel/luasession; then
+if test -x $BUILD_ROOT/luasession/luasession; then
 	BN=${lower_case_appname}${major_version}-lua
-	cp -v $BUILD_ROOT/tools/luadevel/luasession $Frameworks/$BN
+	cp -v $BUILD_ROOT/luasession/luasession $Frameworks/$BN
 	if test x$STRIP = xall ; then
 		strip -s $Frameworks/${BN}
 	fi
@@ -503,6 +491,7 @@ cp ../../system_config $Resources/system_config
 cp ../../gtk2_ardour/icons/*.png ${Resources}/icons/
 cp -r ../../gtk2_ardour/icons/cursor_* ${Resources}/icons/
 cp ../../gtk2_ardour/ArdourMono.ttf $Shared
+cp ../../gtk2_ardour/ArdourSans.ttf $Shared
 cp ../../gtk2_ardour/resources/${PRODUCT_PKG_DIR}-* ${Resources}/resources/
 
 
@@ -548,9 +537,6 @@ fi
 # now fix up the executables
 echo "Fixing up executable dependency names ..."
 executables=$MAIN_EXECUTABLE
-if test x$SAE != x ; then
-	executables="$executables"
-fi
 if test "$HAVE_SESSION_UTILS" = true ; then
 	for file in  $Frameworks/${lower_case_appname}${major_version}-*; do
 		BN=$(basename $file)
@@ -626,17 +612,7 @@ mkdir $PRODUCT_PKG_DIR
 DMGWINBOTTOM=440
 DMGBACKGROUND=dmgbg
 
-if [ x$SAE != x ] ; then
-
-	# SAE packaging
-
-	echo "Creating SAE packaging directory"
-	mv $APPDIR $PRODUCT_PKG_DIR/Ardour3-SAE.app
-	cp HowToInstallArdourSAE.pdf "$PRODUCT_PKG_DIR/How To Install Ardour SAE.pdf"
-	cp SAE-de-keypad.pdf "$PRODUCT_PKG_DIR/Ardour SAE Shortcuts (keypad).pdf"
-	cp SAE-de-nokeypad.pdf "$PRODUCT_PKG_DIR/Ardour SAE Shortcuts.pdf"
-
-elif [ x$MIXBUS != x ] ; then
+if [ x$MIXBUS != x ] ; then
 
 	# Mixbus packaging
 
@@ -742,7 +718,7 @@ if test x$WITH_X42_LV2 != x ; then
 	echo "bundling x42 plugins"
 	mkdir -p "${PRODUCT_PKG_DIR}/${APPROOT}/lib/LV2"
 
-	for proj in x42-meters x42-midifilter x42-midimap x42-stereoroute x42-eq setBfree x42-avldrums x42-whirl x42-limiter; do
+	for proj in x42-meters x42-midifilter x42-stereoroute x42-eq setBfree x42-avldrums x42-whirl x42-limiter x42-tuner; do
 		X42_VERSION=$(curl -s -S http://x42-plugins.com/x42/osx/${proj}.latest.txt)
 		rsync -a -q --partial \
 			rsync://x42-plugins.com/x42/osx/${proj}-lv2-osx-${X42_VERSION}.zip \

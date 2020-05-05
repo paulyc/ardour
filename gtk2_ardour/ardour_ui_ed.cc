@@ -1,21 +1,29 @@
 /*
-    Copyright (C) 20002-2004 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2006 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2005-2016 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2005-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2007 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2006-2012 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2008 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2013-2020 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2014-2019 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2015 André Nusser <andre.nusser@googlemail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifdef WAF_BUILD
 #include "gtk2ardour-config.h"
@@ -36,12 +44,14 @@
 #include "pbd/file_utils.h"
 #include "pbd/fpu.h"
 #include "pbd/convert.h"
+#include "pbd/openuri.h"
 
 #include "gtkmm2ext/cairo_packer.h"
 #include "gtkmm2ext/utils.h"
 #include "gtkmm2ext/window_title.h"
 
 #include "widgets/tearoff.h"
+#include "widgets/tooltips.h"
 
 #include "ardour_ui.h"
 #include "public_editor.h"
@@ -55,18 +65,19 @@
 #include "meterbridge.h"
 #include "luawindow.h"
 #include "mixer_ui.h"
-#include "startup.h"
 #include "window_manager.h"
 #include "global_port_matrix.h"
 #include "location_ui.h"
 #include "main_clock.h"
 #include "rc_option_editor.h"
+#include "virtual_keyboard_window.h"
 
 #include <gtkmm2ext/application.h>
 
 #include "ardour/session.h"
 #include "ardour/profile.h"
 #include "ardour/audioengine.h"
+#include "ardour/lv2_plugin.h"
 
 #include "control_protocol/control_protocol.h"
 
@@ -162,7 +173,7 @@ ARDOUR_UI::install_actions ()
 
 	/* the real actions */
 
-	act = ActionManager::register_action (main_actions, X_("New"), _("New..."),  hide_return (sigc::bind (sigc::mem_fun(*this, &ARDOUR_UI::get_session_parameters), false, true, "")));
+	act = ActionManager::register_action (main_actions, X_("New"), _("New..."),  hide_return (sigc::bind (sigc::mem_fun(*this, &ARDOUR_UI::start_session_load), true)));
 
 	ActionManager::register_action (main_actions, X_("Open"), _("Open..."),  sigc::mem_fun(*this, &ARDOUR_UI::open_session));
 	ActionManager::register_action (main_actions, X_("Recent"), _("Recent..."),  sigc::mem_fun(*this, &ARDOUR_UI::open_recent_session));
@@ -216,7 +227,7 @@ ARDOUR_UI::install_actions ()
 	act = ActionManager::register_action (main_actions, X_("Archive"), _("Archive..."), sigc::mem_fun(*this, &ARDOUR_UI::archive_session));
 	ActionManager::session_sensitive_actions.push_back (act);
 
-	act = ActionManager::register_action (main_actions, X_("Rename"), _("Rename..."), sigc::mem_fun(*this, &ARDOUR_UI::rename_session));
+	act = ActionManager::register_action (main_actions, X_("Rename"), _("Rename..."), sigc::bind (sigc::mem_fun(*this, &ARDOUR_UI::rename_session), false));
 	ActionManager::session_sensitive_actions.push_back (act);
 	ActionManager::write_sensitive_actions.push_back (act);
 
@@ -237,14 +248,6 @@ ARDOUR_UI::install_actions ()
 
 	act = ActionManager::register_action (main_actions, X_("Export"), _("Export"));
 	ActionManager::session_sensitive_actions.push_back (act);
-
-	act = ActionManager::register_action (main_actions, X_("CleanupUnused"), _("Clean-up Unused Sources..."),  sigc::mem_fun (*(ARDOUR_UI::instance()), &ARDOUR_UI::cleanup));
-	ActionManager::session_sensitive_actions.push_back (act);
-	ActionManager::write_sensitive_actions.push_back (act);
-
-	act = ActionManager::register_action (main_actions, X_("CleanupPeakFiles"), _("Reset Peak Files"),  sigc::mem_fun (*(ARDOUR_UI::instance()), &ARDOUR_UI::cleanup_peakfiles));
-	ActionManager::session_sensitive_actions.push_back (act);
-	ActionManager::write_sensitive_actions.push_back (act);
 
 	act = ActionManager::register_action (main_actions, X_("FlushWastebasket"), _("Flush Wastebasket"),  sigc::mem_fun (*(ARDOUR_UI::instance()), &ARDOUR_UI::flush_trash));
 
@@ -482,6 +485,9 @@ ARDOUR_UI::install_actions ()
 	ActionManager::session_sensitive_actions.push_back (act);
 	ActionManager::transport_sensitive_actions.push_back (act);
 
+	act = ActionManager::register_toggle_action (main_actions, X_("ToggleLatencyCompensation"), _("Disable Latency Compensation"), sigc::mem_fun(*this, &ARDOUR_UI::toggle_latency_switch));
+	ActionManager::session_sensitive_actions.push_back (act);
+
 	act = ActionManager::register_action (main_actions, X_("MonitorMenu"), _("Monitor Section")); /* just the submenu item */
 	ActionManager::session_sensitive_actions.push_back (act);
 
@@ -568,6 +574,18 @@ ARDOUR_UI::install_dependent_actions ()
 	act = ActionManager::register_action (main_actions, X_("ExportAudio"), _("Export to Audio File(s)..."),  sigc::mem_fun (*editor, &PublicEditor::export_audio));
 	ActionManager::session_sensitive_actions.push_back (act);
 
+	act = ActionManager::register_action (main_actions, X_("CleanupUnusedSources"), _("Clean-up Unused Sources..."),  sigc::mem_fun (*(ARDOUR_UI::instance()), &ARDOUR_UI::cleanup));
+	ActionManager::session_sensitive_actions.push_back (act);
+	ActionManager::write_sensitive_actions.push_back (act);
+
+	act = ActionManager::register_action (main_actions, X_("CleanupUnusedRegions"), _("Clean-up Unused Regions..."),  sigc::mem_fun (*editor, &PublicEditor::cleanup_regions));
+	ActionManager::session_sensitive_actions.push_back (act);
+	ActionManager::write_sensitive_actions.push_back (act);
+
+	act = ActionManager::register_action (main_actions, X_("CleanupPeakFiles"), _("Rebuild Peak Files"),  sigc::mem_fun (*(ARDOUR_UI::instance()), &ARDOUR_UI::cleanup_peakfiles));
+	ActionManager::session_sensitive_actions.push_back (act);
+	ActionManager::write_sensitive_actions.push_back (act);
+
 	/* these actions are all currently implemented by the Editor, but need
 	 * to be accessible from anywhere as actions.
 	 */
@@ -629,6 +647,8 @@ ARDOUR_UI::install_dependent_actions ()
 	act = ActionManager::register_action (common_actions, "alt-finish-range", _("Finish Range"), sigc::bind (sigc::mem_fun(editor, &PublicEditor::keyboard_selection_finish), false, Editing::EDIT_IGNORE_NONE));
 	ActionManager::session_sensitive_actions.push_back (act);
 
+	act = ActionManager::register_action (common_actions, "select-all-visible-lanes", _("Select All Visible Lanes"), sigc::mem_fun(editor, &PublicEditor::select_all_visible_lanes));
+	ActionManager::session_sensitive_actions.push_back (act);
 	act = ActionManager::register_action (common_actions, "select-all-tracks", _("Select All Tracks"), sigc::mem_fun(editor, &PublicEditor::select_all_tracks));
 	ActionManager::session_sensitive_actions.push_back (act);
 	act = ActionManager::register_action (common_actions, "deselect-all", _("Deselect All"), sigc::mem_fun(editor, &PublicEditor::deselect_all));
@@ -698,6 +718,12 @@ ARDOUR_UI::build_menu_bar ()
 	ev->set_name ("MainMenuBar");
 	ev->show ();
 
+	EventBox* ev_dsp = manage (new EventBox);
+	EventBox* ev_path = manage (new EventBox);
+	EventBox* ev_audio = manage (new EventBox);
+	EventBox* ev_format = manage (new EventBox);
+	EventBox* ev_timecode = manage (new EventBox);
+
 	Gtk::HBox* hbox = manage (new Gtk::HBox);
 	hbox->show ();
 	hbox->set_border_width (2);
@@ -712,7 +738,20 @@ ARDOUR_UI::build_menu_bar ()
 	sample_rate_label.set_name ("SampleRate");
 	sample_rate_label.set_use_markup ();
 	format_label.set_name ("Format");
+	session_path_label.set_name ("Path");
 	format_label.set_use_markup ();
+
+	ev_dsp->add (dsp_load_label);
+	ev_path->add (session_path_label);
+	ev_audio->add (sample_rate_label);
+	ev_format->add (format_label);
+	ev_timecode->add (timecode_format_label);
+
+	ev_dsp->show ();
+	ev_path->show ();
+	ev_audio->show ();
+	ev_format->show ();
+	ev_timecode->show ();
 
 #ifdef __APPLE__
 	use_menubar_as_top_menubar ();
@@ -721,32 +760,46 @@ ARDOUR_UI::build_menu_bar ()
 #endif
 
 	hbox->pack_end (error_alert_button, false, false, 2);
-	hbox->pack_end (dsp_load_label, false, false, 4);
-	hbox->pack_end (disk_space_label, false, false, 4);
-	hbox->pack_end (sample_rate_label, false, false, 4);
-	hbox->pack_end (timecode_format_label, false, false, 4);
-	hbox->pack_end (format_label, false, false, 4);
-	hbox->pack_end (peak_thread_work_label, false, false, 4);
-	hbox->pack_end (wall_clock_label, false, false, 2);
+	hbox->pack_end (wall_clock_label, false, false, 10);
+
+	hbox->pack_end (*ev_dsp, false, false, 6);
+	hbox->pack_end (disk_space_label, false, false, 6);
+	hbox->pack_end (*ev_audio, false, false, 6);
+	hbox->pack_end (*ev_timecode, false, false, 6);
+	hbox->pack_end (*ev_format, false, false, 6);
+	hbox->pack_end (peak_thread_work_label, false, false, 6);
+	hbox->pack_end (*ev_path, false, false, 6);
 
 	menu_hbox.pack_end (*ev, true, true, 2);
 
 	menu_bar_base.set_name ("MainMenuBar");
 	menu_bar_base.add (menu_hbox);
 
-#ifndef __APPLE__
-	// OSX provides its own wallclock, thank you very much
-	_status_bar_visibility.add (&wall_clock_label,      X_("WallClock"), _("Wall Clock"), false);
-#endif
+	_status_bar_visibility.add (&session_path_label    ,X_("Path"),      _("Path to Session"), false);
 	_status_bar_visibility.add (&peak_thread_work_label,X_("Peakfile"),  _("Active Peak-file Work"), false);
 	_status_bar_visibility.add (&format_label,          X_("Format"),    _("File Format"), false);
 	_status_bar_visibility.add (&timecode_format_label, X_("TCFormat"),  _("Timecode Format"), false);
 	_status_bar_visibility.add (&sample_rate_label,     X_("Audio"),     _("Audio"), true);
 	_status_bar_visibility.add (&disk_space_label,      X_("Disk"),      _("Disk Space"), !Profile->get_small_screen());
 	_status_bar_visibility.add (&dsp_load_label,        X_("DSP"),       _("DSP"), true);
+#ifndef __APPLE__
+	// OSX provides its own wallclock, thank you very much
+	_status_bar_visibility.add (&wall_clock_label,      X_("WallClock"), _("Wall Clock"), false);
+#endif
 
 	ev->signal_button_press_event().connect (sigc::mem_fun (_status_bar_visibility, &VisibilityGroup::button_press_event));
-	ev->signal_button_release_event().connect (sigc::mem_fun (*this, &ARDOUR_UI::xrun_button_release));
+
+	ev_dsp->signal_button_press_event().connect (sigc::mem_fun (*this, &ARDOUR_UI::xrun_button_press));
+	ev_dsp->signal_button_release_event().connect (sigc::mem_fun (*this, &ARDOUR_UI::xrun_button_release));
+	ev_path->signal_button_press_event().connect (sigc::mem_fun (*this, &ARDOUR_UI::path_button_press));
+	ev_audio->signal_button_press_event().connect (sigc::mem_fun (*this, &ARDOUR_UI::audio_button_press));
+	ev_format->signal_button_press_event().connect (sigc::mem_fun (*this, &ARDOUR_UI::format_button_press));
+	ev_timecode->signal_button_press_event().connect (sigc::mem_fun (*this, &ARDOUR_UI::timecode_button_press));
+
+	ArdourWidgets::set_tooltip (session_path_label, _("Double click to open session folder."));
+	ArdourWidgets::set_tooltip (format_label, _("Double click to edit audio file format."));
+	ArdourWidgets::set_tooltip (timecode_format_label, _("Double click to change timecode settings."));
+	ArdourWidgets::set_tooltip (sample_rate_label, _("Double click to show audio/midi setup."));
 }
 
 void
@@ -857,6 +910,11 @@ ARDOUR_UI::save_ardour_state ()
 		if (location_ui) {
 			_session->add_instant_xml (location_ui->ui().get_state ());
 		}
+		if (virtual_keyboard_window) {
+			XMLNode& vkstate (virtual_keyboard_window->get_state());
+			vkstate.add_child_nocopy (virtual_keyboard_window.get_state ());
+			_session->add_instant_xml (vkstate);
+		}
 	} else {
 		Config->add_instant_xml (main_window_node);
 		Config->add_instant_xml (enode);
@@ -865,6 +923,11 @@ ARDOUR_UI::save_ardour_state ()
 		Config->add_instant_xml (bnode);
 		if (location_ui) {
 			Config->add_instant_xml (location_ui->ui().get_state ());
+		}
+		if (virtual_keyboard_window) {
+			XMLNode& vkstate (virtual_keyboard_window->get_state());
+			vkstate.add_child_nocopy (virtual_keyboard_window.get_state ());
+			_session->add_instant_xml (vkstate);
 		}
 	}
 
@@ -877,8 +940,11 @@ ARDOUR_UI::save_ardour_state ()
 }
 
 void
-ARDOUR_UI::resize_text_widgets ()
+ARDOUR_UI::on_theme_changed ()
 {
+	LV2Plugin::set_global_ui_background_color (UIConfiguration::instance().color ("gtk_background"));
+	LV2Plugin::set_global_ui_foreground_color (UIConfiguration::instance().color ("gtk_foreground"));
+	LV2Plugin::set_global_ui_scale_factor (UIConfiguration::instance().get_ui_scale());
 }
 
 void
@@ -887,6 +953,19 @@ ARDOUR_UI::focus_on_clock ()
 	if (primary_clock) {
 		primary_clock->focus ();
 	}
+}
+
+bool
+ARDOUR_UI::xrun_button_press (GdkEventButton* ev)
+{
+	if (ev->button != 1 || ev->type != GDK_2BUTTON_PRESS) {
+		return false;
+	}
+	if (_session) {
+		_session->reset_xrun_count ();
+		update_cpu_load ();
+	}
+	return true;
 }
 
 bool
@@ -899,6 +978,29 @@ ARDOUR_UI::xrun_button_release (GdkEventButton* ev)
 	if (_session) {
 		_session->reset_xrun_count ();
 		update_cpu_load ();
+	}
+	return true;
+}
+
+bool
+ARDOUR_UI::audio_button_press (GdkEventButton* ev)
+{
+  if (ev->button != 1 || ev->type != GDK_2BUTTON_PRESS) {
+    return false;
+  }
+  audio_midi_setup->present ();
+	return true;
+}
+
+bool
+ARDOUR_UI::path_button_press (GdkEventButton* ev)
+{
+	if (ev->button != 1 || ev->type != GDK_2BUTTON_PRESS) {
+		return false;
+	}
+
+	if (_session) {
+		PBD::open_folder (_session->path ());
 	}
 	return true;
 }

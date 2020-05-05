@@ -1,21 +1,31 @@
 /*
-    Copyright (C) 2003 Paul Davis
-
-    This program is free software; you an redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2006 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2005-2009 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2005-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2005 Karsten Wiese <fzuuzf@googlemail.com>
+ * Copyright (C) 2006-2007 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2006-2009 Sampo Savolainen <v2@iki.fi>
+ * Copyright (C) 2007-2015 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2015 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2015 André Nusser <andre.nusser@googlemail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifdef WAF_BUILD
 #include "gtk2ardour-config.h"
@@ -267,7 +277,8 @@ ARDOUR_UI_UTILS::sanitized_font (std::string const& name)
 	Pango::FontDescription fd (name);
 
 	if (fd.get_family().empty()) {
-		fd.set_family ("Sans");
+		/* default: "Sans" or "ArdourSans" */
+		fd.set_family (UIConfiguration::instance ().get_ui_font_family ());
 	}
 
 	return fd;
@@ -754,6 +765,43 @@ ARDOUR_UI_UTILS::rate_as_string (float r)
 	return buf;
 }
 
+string
+ARDOUR_UI_UTILS::samples_as_time_string (samplecnt_t s, float rate, bool show_samples)
+{
+	char buf[32];
+	if (rate <= 0) {
+		snprintf (buf, sizeof (buf), "--");
+	} else if (s == 0) {
+		snprintf (buf, sizeof (buf), "0");
+	} else if (s < 1000 && show_samples) {
+		/* 0 .. 999 spl */
+		snprintf (buf, sizeof (buf), "%" PRId64" spl", s);
+	} else if (s < (rate / 1000.f)) {
+		/* 0 .. 999 usec */
+		snprintf (buf, sizeof (buf), "%.0f \u00B5s", s * 1e+6f / rate);
+	} else if (s < (rate / 100.f)) {
+		/* 1.000 .. 9.999 ms */
+		snprintf (buf, sizeof (buf), "%.3f ms", s * 1e+3f / rate);
+	} else if (s < (rate / 10.f)) {
+		/* 1.00 .. 99.99 ms */
+		snprintf (buf, sizeof (buf), "%.2f ms", s * 1e+3f / rate);
+	} else if (s < rate) {
+		/* 100.0 .. 999.9 ms */
+		snprintf (buf, sizeof (buf), "%.1f ms", s * 1e+3f / rate);
+	} else if (s < rate * 10.f) {
+		/* 1.000 s .. 9.999 s */
+		snprintf (buf, sizeof (buf), "%.3f s", s / rate);
+	} else if (s < rate * 90.f) {
+		/* 10.00 s .. 89.99 s */
+		snprintf (buf, sizeof (buf), "%.2f s", s / rate);
+	} else {
+		/* 1m30.0 ...  */
+		snprintf (buf, sizeof (buf), "'%.0fm%.1f", s / (60.f * rate), fmodf (s / rate, 60));
+	}
+	buf[31] = '\0';
+	return buf;
+}
+
 bool
 ARDOUR_UI_UTILS::windows_overlap (Gtk::Window *a, Gtk::Window *b)
 {
@@ -805,7 +853,6 @@ ARDOUR_UI_UTILS::overwrite_file_dialog (Gtk::Window& parent, string title, strin
 	switch (dialog.run()) {
 	case RESPONSE_ACCEPT:
 		return true;
-	case RESPONSE_CANCEL:
 	default:
 		return false;
 	}

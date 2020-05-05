@@ -1,20 +1,25 @@
 /*
-    Copyright (C) 2006 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2006-2015 David Robillard <d@drobilla.net>
+ * Copyright (C) 2008-2012 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2009-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_midi_time_axis_h__
 #define __ardour_midi_time_axis_h__
@@ -88,15 +93,12 @@ public:
 	void show_existing_automation (bool apply_to_selection = false);
 	void create_automation_child (const Evoral::Parameter& param, bool show);
 
+	void get_regions_with_selected_data (RegionSelection&);
+
 	bool paste (ARDOUR::samplepos_t, const Selection&, PasteContext& ctx, const int32_t sub_num);
 
 	ARDOUR::NoteMode  note_mode() const { return _note_mode; }
 	ARDOUR::ColorMode color_mode() const { return _color_mode; }
-
-	boost::shared_ptr<MIDI::Name::MasterDeviceNames> get_device_names();
-	boost::shared_ptr<MIDI::Name::CustomDeviceMode> get_device_mode();
-
-	void update_range();
 
 	Gtk::CheckMenuItem* automation_child_menu_item (Evoral::Parameter);
 
@@ -109,6 +111,7 @@ public:
 	uint8_t get_channel_for_add () const;
 
 	void get_per_region_note_selection (std::list<std::pair<PBD::ID, std::set<boost::shared_ptr<Evoral::Note<Temporal::Beats> > > > >&);
+	void use_midnam_info ();
 
 protected:
 	void start_step_editing ();
@@ -119,12 +122,10 @@ private:
 	sigc::signal<void, std::string, std::string>  _midi_patch_settings_changed;
 
 	void setup_midnam_patches ();
-	void update_patch_selector ();
 
-	void start_scroomer_update ();
-	void stop_scroomer_update ();
 	sigc::connection _note_range_changed_connection;
 
+	void maybe_trigger_model_change ();
 	void model_changed(const std::string& model);
 	void custom_device_mode_changed(const std::string& mode);
 
@@ -143,6 +144,8 @@ private:
 	void update_control_names ();
 
 	bool                          _ignore_signals;
+	std::string                   _effective_model;
+	std::string                   _effective_mode;
 	MidiScroomer*                 _range_scroomer;
 	PianoRollHeader*              _piano_roll_header;
 	ARDOUR::NoteMode              _note_mode;
@@ -165,10 +168,9 @@ private:
 	void add_channel_command_menu_item (Gtk::Menu_Helpers::MenuList& items, const std::string& label, ARDOUR::AutomationType auto_type, uint8_t cmd);
 
 	Gtk::Menu* controller_menu;
-	Gtk::Menu* poly_pressure_menu;
 
 	void add_single_channel_controller_item (Gtk::Menu_Helpers::MenuList& ctl_items, int ctl, const std::string& name);
-	void add_multi_channel_controller_item (Gtk::Menu_Helpers::MenuList& ctl_items, int ctl, const std::string& name);
+	void add_multi_channel_controller_item (Gtk::Menu_Helpers::MenuList& ctl_items, uint16_t chanels, int ctl, const std::string& name);
 	void build_controller_menu ();
 	void toggle_channel_selector ();
 	void channel_selector_hidden ();

@@ -1,28 +1,35 @@
 /*
-  Copyright (C) 2008-2012 Paul Davis
-  Author: Sakari Bergen
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
-
-#include "ardour/export_graph_builder.h"
+ * Copyright (C) 2009-2013 Sakari Bergen <sakari.bergen@beatwaves.net>
+ * Copyright (C) 2010-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2010-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2011-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2012-2016 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2013-2016 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2015-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <vector>
 
 #include <glibmm/miscutils.h>
+#include <glibmm/timer.h>
+
+#include "pbd/uuid.h"
+#include "pbd/file_utils.h"
+#include "pbd/cpus.h"
 
 #include "audiographer/process_context.h"
 #include "audiographer/general/chunker.h"
@@ -46,15 +53,13 @@
 #include "ardour/export_failed.h"
 #include "ardour/export_filename.h"
 #include "ardour/export_format_specification.h"
+#include "ardour/export_graph_builder.h"
 #include "ardour/export_timespan.h"
 #include "ardour/filesystem_paths.h"
 #include "ardour/session_directory.h"
 #include "ardour/session_metadata.h"
 #include "ardour/sndfile_helpers.h"
 #include "ardour/system_exec.h"
-
-#include "pbd/file_utils.h"
-#include "pbd/cpus.h"
 
 using namespace AudioGrapher;
 using std::string;
@@ -72,20 +77,33 @@ ExportGraphBuilder::~ExportGraphBuilder ()
 {
 }
 
-int
+samplecnt_t
 ExportGraphBuilder::process (samplecnt_t samples, bool last_cycle)
 {
 	assert(samples <= process_buffer_samples);
 
+	sampleoffset_t off = 0;
 	for (ChannelMap::iterator it = channels.begin(); it != channels.end(); ++it) {
 		Sample const * process_buffer = 0;
 		it->first->read (process_buffer, samples);
-		ConstProcessContext<Sample> context(process_buffer, samples, 1);
+
+		if (session.remaining_latency_preroll () >= _master_align + samples) {
+			/* Skip processing during pre-roll, only read/write export ringbuffers */
+			return 0;
+		}
+
+		off = 0;
+		if (session.remaining_latency_preroll () > _master_align) {
+			off = session.remaining_latency_preroll () - _master_align;
+			assert (off < samples);
+		}
+
+		ConstProcessContext<Sample> context(&process_buffer[off], samples - off, 1);
 		if (last_cycle) { context().set_flag (ProcessContext<Sample>::EndOfInput); }
 		it->second->process (context);
 	}
 
-	return 0;
+	return samples - off;
 }
 
 bool
@@ -121,6 +139,7 @@ ExportGraphBuilder::reset ()
 	intermediates.clear ();
 	analysis_map.clear();
 	_realtime = false;
+	_master_align = 0;
 }
 
 void
@@ -143,17 +162,25 @@ ExportGraphBuilder::set_current_timespan (boost::shared_ptr<ExportTimespan> span
 void
 ExportGraphBuilder::add_config (FileSpec const & config, bool rt)
 {
-	ExportChannelConfiguration::ChannelList const & channels =
-		config.channel_config->get_channels();
-	for(ExportChannelConfiguration::ChannelList::const_iterator it = channels.begin();
-	    it != channels.end(); ++it) {
-		(*it)->set_max_buffer_size(process_buffer_samples);
+	/* calculate common latency, shave off master-bus hardware playback latency (if any) */
+	_master_align = session.master_out() ? session.master_out()->output()->connected_latency (true) : 0;
+
+	ExportChannelConfiguration::ChannelList const & channels = config.channel_config->get_channels();
+
+	for(ExportChannelConfiguration::ChannelList::const_iterator it = channels.begin(); it != channels.end(); ++it) {
+		_master_align = std::min (_master_align, (*it)->common_port_playback_latency ());
+	}
+
+	/* now set-up port-data sniffing and delay-ringbuffers */
+	for(ExportChannelConfiguration::ChannelList::const_iterator it = channels.begin(); it != channels.end(); ++it) {
+		(*it)->prepare_export (process_buffer_samples, _master_align);
 	}
 
 	_realtime = rt;
 
-	// If the sample rate is "session rate", change it to the real value.
-	// However, we need to copy it to not change the config which is saved...
+	/* If the sample rate is "session rate", change it to the real value.
+	 * However, we need to copy it to not change the config which is saved...
+	 */
 	FileSpec new_config (config);
 	new_config.format.reset(new ExportFormatSpecification(*new_config.format, false));
 	if(new_config.format->sample_rate() == ExportFormatBase::SR_Session) {
@@ -161,14 +188,14 @@ ExportGraphBuilder::add_config (FileSpec const & config, bool rt)
 		new_config.format->set_sample_rate(ExportFormatBase::nearest_sample_rate(session_rate));
 	}
 
-
 	if (!new_config.channel_config->get_split ()) {
 		add_split_config (new_config);
 		return;
 	}
 
-	// Split channel configurations are split into several channel configurations,
-	// each corresponding to a file, at this stage
+	/* Split channel configurations are split into several channel configurations,
+	 * each corresponding to a file, at this stage
+	 */
 	typedef std::list<boost::shared_ptr<ExportChannelConfiguration> > ConfigList;
 	ConfigList file_configs;
 	new_config.channel_config->configurations_for_files (file_configs);
@@ -651,10 +678,24 @@ ExportGraphBuilder::Intermediate::prepare_post_processing()
 void
 ExportGraphBuilder::Intermediate::start_post_processing()
 {
-	// called in disk-thread (when exporting in realtime)
 	tmp_file->seek (0, SEEK_SET);
+
+	/* called in disk-thread when exporting in realtime,
+	 * to enable freewheeling for post-proc.
+	 *
+	 * It may also be called to normalize from the
+	 * freewheeling rt-callback, in which case this
+	 * will be a no-op.
+	 *
+	 * RT Stem export has multiple TmpFileRt threads,
+	 * prevent concurrent calls to enable freewheel ()
+	 */
+	Glib::Threads::Mutex::Lock lm (parent.engine_request_lock);
 	if (!AudioEngine::instance()->freewheeling ()) {
 		AudioEngine::instance()->freewheel (true);
+		while (!AudioEngine::instance()->freewheeling ()) {
+			Glib::usleep (AudioEngine::instance()->usecs_per_cycle ());
+		}
 	}
 }
 

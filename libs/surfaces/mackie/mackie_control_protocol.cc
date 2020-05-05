@@ -1,21 +1,26 @@
 /*
-	Copyright (C) 2006,2007 John Anderson
-	Copyright (C) 2012 Paul Davis
-
-	This program is free software; you can redistribute it and/or modify
-	it under the terms of the GNU General Public License as published by
-	the Free Software Foundation; either version 2 of the License, or
-	(at your option) any later version.
-
-	This program is distributed in the hope that it will be useful,
-	but WITHOUT ANY WARRANTY; without even the implied warranty of
-	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-	GNU General Public License for more details.
-
-	You should have received a copy of the GNU General Public License
-	along with this program; if not, write to the Free Software
-	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2006-2007 John Anderson
+ * Copyright (C) 2007-2010 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2015-2016 Len Ovens <len@ovenwerks.net>
+ * Copyright (C) 2015-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2016-2018 Ben Loftis <ben@harrisonconsoles.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <fcntl.h>
 #include <iostream>
@@ -67,6 +72,7 @@
 #include "midi_byte_array.h"
 #include "mackie_control_exception.h"
 #include "device_profile.h"
+#include "subview.h"
 #include "surface_port.h"
 #include "surface.h"
 #include "strip.h"
@@ -75,6 +81,10 @@
 #include "button.h"
 #include "fader.h"
 #include "pot.h"
+
+#ifndef G_SOURCE_FUNC
+#define G_SOURCE_FUNC(f) ((GSourceFunc) (void (*)(void)) (f))
+#endif
 
 using namespace ARDOUR;
 using namespace std;
@@ -117,7 +127,6 @@ MackieControlProtocol::MackieControlProtocol (Session& session)
 	, _scrub_mode (false)
 	, _flip_mode (Normal)
 	, _view_mode (Mixer)
-	, _subview_mode (None)
 	, _current_selected_track (-1)
 	, _modifier_state (0)
 	, _ipmidi_base (MIDI::IPMIDIPort::lowest_ipmidi_port_default)
@@ -130,6 +139,8 @@ MackieControlProtocol::MackieControlProtocol (Session& session)
 	, nudge_modifier_consumed_by_button (false)
 {
 	DEBUG_TRACE (DEBUG::MackieControl, "MackieControlProtocol::MackieControlProtocol\n");
+
+	_subview = Mackie::SubviewFactory::instance()->create_subview(Subview::None, *this, boost::shared_ptr<Stripable>());
 
 	DeviceInfo::reload_device_info ();
 	DeviceProfile::reload_device_profiles ();
@@ -481,6 +492,8 @@ MackieControlProtocol::set_active (bool yn)
 		redisplay_connection = redisplay_timeout->connect (sigc::mem_fun (*this, &MackieControlProtocol::redisplay));
 		redisplay_timeout->attach (main_loop()->get_context());
 
+		notify_transport_state_changed ();
+
 	} else {
 
 		BaseUI::quit ();
@@ -647,7 +660,7 @@ MackieControlProtocol::device_ready ()
 {
 	DEBUG_TRACE (DEBUG::MackieControl, string_compose ("device ready init (active=%1)\n", active()));
 	update_surfaces ();
-	set_subview_mode (MackieControlProtocol::None, boost::shared_ptr<Stripable>());
+	set_subview_mode (Mackie::Subview::None, boost::shared_ptr<Stripable>());
 	set_flip_mode (Normal);
 }
 
@@ -935,7 +948,7 @@ MackieControlProtocol::create_surfaces ()
 				ipm->mcp = this;
 				ipm->port = &input_port;
 
-				g_source_set_callback (surface->input_source, (GSourceFunc) ipmidi_input_handler, ipm, NULL);
+				g_source_set_callback (surface->input_source, G_SOURCE_FUNC (ipmidi_input_handler), ipm, NULL);
 				g_source_attach (surface->input_source, main_loop()->get_context()->gobj());
 			}
 		}
@@ -1337,11 +1350,11 @@ MackieControlProtocol::notify_transport_state_changed()
 	}
 
 	// switch various play and stop buttons on / off
-	update_global_button (Button::Loop, session->get_play_loop());
-	update_global_button (Button::Play, session->transport_speed() == 1.0);
-	update_global_button (Button::Stop, session->transport_stopped ());
-	update_global_button (Button::Rewind, session->transport_speed() < 0.0);
-	update_global_button (Button::Ffwd, session->transport_speed() > 1.0);
+	update_global_button (Button::Loop, loop_button_onoff ());
+	update_global_button (Button::Play, play_button_onoff ());
+	update_global_button (Button::Stop, stop_button_onoff ());
+	update_global_button (Button::Rewind, rewind_button_onoff ());
+	update_global_button (Button::Ffwd, ffwd_button_onoff ());
 
 	// sometimes a return to start leaves time code at old time
 	_timecode_last = string (10, ' ');
@@ -1394,7 +1407,7 @@ MackieControlProtocol::notify_record_state_changed ()
 				ls = on;
 				break;
 			case Session::Enabled:
-				
+
 				if(_device_info.is_qcon()){
 					// For qcon the rec button is two state only (on/off)
 					DEBUG_TRACE (DEBUG::MackieControl, "record state changed to enabled, LED on (QCon)\n");
@@ -1686,43 +1699,8 @@ void
 MackieControlProtocol::notify_subview_stripable_deleted ()
 {
 	/* return to global/mixer view */
-	_subview_stripable.reset ();
+	_subview->notify_subview_stripable_deleted();
 	set_view_mode (Mixer);
-}
-
-bool
-MackieControlProtocol::subview_mode_would_be_ok (SubViewMode mode, boost::shared_ptr<Stripable> r)
-{
-	switch (mode) {
-	case None:
-		return true;
-		break;
-
-	case Sends:
-		if (r && r->send_level_controllable (0)) {
-			return true;
-		}
-		break;
-
-	case EQ:
-		if (r && r->eq_band_cnt() > 0) {
-			return true;
-		}
-		break;
-
-	case Dynamics:
-		if (r && r->comp_enable_controllable()) {
-			return true;
-		}
-		break;
-
-	case TrackView:
-		if (r) {
-			return true;
-		}
-	}
-
-	return false;
 }
 
 bool
@@ -1743,8 +1721,8 @@ MackieControlProtocol::redisplay_subview_mode ()
 	return false;
 }
 
-int
-MackieControlProtocol::set_subview_mode (SubViewMode sm, boost::shared_ptr<Stripable> r)
+bool
+MackieControlProtocol::set_subview_mode (Subview::Mode sm, boost::shared_ptr<Stripable> r)
 {
 	DEBUG_TRACE (DEBUG::MackieControl, string_compose ("set subview mode %1 with stripable %2, current flip mode %3\n", sm, (r ? r->name() : string ("null")), _flip_mode));
 
@@ -1752,7 +1730,8 @@ MackieControlProtocol::set_subview_mode (SubViewMode sm, boost::shared_ptr<Strip
 		set_flip_mode (Normal);
 	}
 
-	if (!subview_mode_would_be_ok (sm, r)) {
+	std::string reason_why_subview_not_possible = "";
+	if (!_subview->subview_mode_would_be_ok (sm, r, reason_why_subview_not_possible)) {
 
 		DEBUG_TRACE (DEBUG::MackieControl, "subview mode not OK\n");
 
@@ -1761,27 +1740,9 @@ MackieControlProtocol::set_subview_mode (SubViewMode sm, boost::shared_ptr<Strip
 			Glib::Threads::Mutex::Lock lm (surfaces_lock);
 
 			if (!surfaces.empty()) {
-
-				string msg;
-
-				switch (sm) {
-				case Sends:
-					msg = _("no sends for selected track/bus");
-					break;
-				case EQ:
-					msg = _("no EQ in the track/bus");
-					break;
-				case Dynamics:
-					msg = _("no dynamics in selected track/bus");
-					break;
-				case TrackView:
-					msg = _("no track view possible");
-				default:
-					break;
-				}
-				if (!msg.empty()) {
-					surfaces.front()->display_message_for (msg, 1000);
-					if (_subview_mode != None) {
+				if (!reason_why_subview_not_possible.empty()) {
+					surfaces.front()->display_message_for (reason_why_subview_not_possible, 1000);
+					if (_subview->subview_mode() != Mackie::Subview::None) {
 						/* redisplay current subview mode after
 						   that message goes away.
 						*/
@@ -1793,73 +1754,21 @@ MackieControlProtocol::set_subview_mode (SubViewMode sm, boost::shared_ptr<Strip
 			}
 		}
 
-		return -1;
+		return false;
 	}
 
-	boost::shared_ptr<Stripable> old_stripable = _subview_stripable;
-
-	_subview_mode = sm;
-	_subview_stripable = r;
-
-	if (_subview_stripable != old_stripable) {
-		subview_stripable_connections.drop_connections ();
-
-		/* Catch the current subview stripable going away */
-		if (_subview_stripable) {
-			_subview_stripable->DropReferences.connect (subview_stripable_connections, MISSING_INVALIDATOR,
-			                                            boost::bind (&MackieControlProtocol::notify_subview_stripable_deleted, this),
-			                                            this);
-		}
+	_subview = Mackie::SubviewFactory::instance()->create_subview(sm, *this, r);
+	/* Catch the current subview stripable going away */
+	if (_subview->subview_stripable()) {
+		_subview->subview_stripable()->DropReferences.connect (_subview->subview_stripable_connections(), MISSING_INVALIDATOR,
+													boost::bind (&MackieControlProtocol::notify_subview_stripable_deleted, this),
+													this);
 	}
 
 	redisplay_subview_mode ();
+	_subview->update_global_buttons();
 
-	/* turn buttons related to vpot mode on or off as required */
-
-	switch (_subview_mode) {
-	case MackieControlProtocol::None:
-		update_global_button (Button::Send, off);
-		update_global_button (Button::Plugin, off);
-		update_global_button (Button::Eq, off);
-		update_global_button (Button::Dyn, off);
-		update_global_button (Button::Track, off);
-		update_global_button (Button::Pan, on);
-		break;
-	case MackieControlProtocol::EQ:
-		update_global_button (Button::Send, off);
-		update_global_button (Button::Plugin, off);
-		update_global_button (Button::Eq, on);
-		update_global_button (Button::Dyn, off);
-		update_global_button (Button::Track, off);
-		update_global_button (Button::Pan, off);
-		break;
-	case MackieControlProtocol::Dynamics:
-		update_global_button (Button::Send, off);
-		update_global_button (Button::Plugin, off);
-		update_global_button (Button::Eq, off);
-		update_global_button (Button::Dyn, on);
-		update_global_button (Button::Track, off);
-		update_global_button (Button::Pan, off);
-		break;
-	case MackieControlProtocol::Sends:
-		update_global_button (Button::Send, on);
-		update_global_button (Button::Plugin, off);
-		update_global_button (Button::Eq, off);
-		update_global_button (Button::Dyn, off);
-		update_global_button (Button::Track, off);
-		update_global_button (Button::Pan, off);
-		break;
-	case MackieControlProtocol::TrackView:
-		update_global_button (Button::Send, off);
-		update_global_button (Button::Plugin, off);
-		update_global_button (Button::Eq, off);
-		update_global_button (Button::Dyn, off);
-		update_global_button (Button::Track, on);
-		update_global_button (Button::Pan, off);
-		break;
-	}
-
-	return 0;
+	return true;
 }
 
 void
@@ -1879,7 +1788,8 @@ MackieControlProtocol::set_view_mode (ViewMode m)
 	}
 
 	/* leave subview mode, whatever it was */
-	set_subview_mode (None, boost::shared_ptr<Stripable>());
+	DEBUG_TRACE (DEBUG::MackieControl, "\t\t\tsubview mode reset in MackieControlProtocol::set_view_mode \n");
+	set_subview_mode (Mackie::Subview::None, boost::shared_ptr<Stripable>());
 	display_view_mode ();
 }
 
@@ -2402,6 +2312,27 @@ MackieControlProtocol::stripable_selection_changed ()
 		(*si)->update_strip_selection ();
 	}
 
+	/* if we are following the Gui, find the selected strips and map them here */
+	if (_device_info.single_fader_follows_selection()) {
+
+		Sorted sorted = get_sorted_stripables();
+
+		Sorted::iterator r = sorted.begin();
+		for (Surfaces::iterator si = surfaces.begin(); si != surfaces.end(); ++si) {
+			vector<boost::shared_ptr<Stripable> > stripables;
+			uint32_t added = 0;
+
+			for (; r != sorted.end() && added < (*si)->n_strips (false); ++r, ++added) {
+				if ((*r)->is_selected()) {
+					stripables.push_back (*r);
+				}
+			}
+
+			(*si)->map_stripables (stripables);
+		}
+		return;
+	}
+
 	boost::shared_ptr<Stripable> s = first_selected_stripable ();
 	if (s) {
 		check_fader_automation_state ();
@@ -2413,10 +2344,13 @@ MackieControlProtocol::stripable_selection_changed ()
 		 * set_subview_mode() will fail, and we will reset to None.
 		 */
 
-		if (set_subview_mode (_subview_mode, s)) {
-			set_subview_mode (None, boost::shared_ptr<Stripable>());
+		if (!set_subview_mode (_subview->subview_mode(), s)) {
+			set_subview_mode (Mackie::Subview::None, boost::shared_ptr<Stripable>());
 		}
-
+	}
+	else {
+		// none selected or not on surface
+		set_subview_mode(Mackie::Subview::None, boost::shared_ptr<Stripable>());
 	}
 }
 
@@ -2441,12 +2375,6 @@ MackieControlProtocol::first_selected_stripable () const
 	}
 
 	return s; /* may be null */
-}
-
-boost::shared_ptr<Stripable>
-MackieControlProtocol::subview_stripable () const
-{
-	return _subview_stripable;
 }
 
 uint32_t

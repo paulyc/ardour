@@ -1,21 +1,26 @@
 /*
-    Copyright (C) 2000-2003 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2006-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2006-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2014-2018 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2015-2016 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2015-2017 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_gtk_selection_h__
 #define __ardour_gtk_selection_h__
@@ -85,10 +90,14 @@ public:
 	PlaylistSelection    playlists;
 	PointSelection       points;
 	MarkerSelection      markers;
-	MidiRegionSelection  midi_regions;
 
 	/** only used when this class is used as a cut buffer */
 	MidiNoteSelection    midi_notes;
+
+	/** we don't store MidiRegionViews in their own selection, we just pull
+	 * them from "regions" as a convenience for various operations.
+	 */
+	MidiRegionSelection midi_regions();
 
 	Selection (PublicEditor const * e, bool manage_libardour_selection);
 
@@ -102,7 +111,6 @@ public:
 	sigc::signal<void> PointsChanged;
 	sigc::signal<void> MarkersChanged;
 	sigc::signal<void> MidiNotesChanged;
-	sigc::signal<void> MidiRegionsChanged;
 
 	void clear ();
 
@@ -127,7 +135,6 @@ public:
 	void set (const TrackViewList&);
 	void set (const MidiNoteSelection&);
 	void set (RegionView*, bool also_clear_tracks = true);
-	void set (MidiRegionView*);
 	void set (std::vector<RegionView*>&);
 	long set (samplepos_t, samplepos_t);
 	void set_preserving_all_ranges (samplepos_t, samplepos_t);
@@ -142,7 +149,6 @@ public:
 	void toggle (const TrackViewList&);
 	void toggle (const MidiNoteSelection&);
 	void toggle (RegionView*);
-	void toggle (MidiRegionView*);
 	void toggle (MidiCutBuffer*);
 	void toggle (std::vector<RegionView*>&);
 	long toggle (samplepos_t, samplepos_t);
@@ -157,7 +163,6 @@ public:
 	void add (const TrackViewList&);
 	void add (const MidiNoteSelection&);
 	void add (RegionView*);
-	void add (MidiRegionView*);
 	void add (MidiCutBuffer*);
 	void add (std::vector<RegionView*>&);
 	long add (samplepos_t, samplepos_t);
@@ -174,7 +179,6 @@ public:
 	void remove (const TrackViewList&);
 	void remove (const MidiNoteSelection&);
 	void remove (RegionView*);
-	void remove (MidiRegionView*);
 	void remove (MidiCutBuffer*);
 	void remove (uint32_t selection_id);
 	void remove (samplepos_t, samplepos_t);
@@ -214,7 +218,6 @@ public:
 	void clear_points (bool with_signal = true);
 	void clear_markers (bool with_signal = true);
 	void clear_midi_notes (bool with_signal = true);
-	void clear_midi_regions (bool with_signal = true);
 
 	void foreach_region (void (ARDOUR::Region::*method)(void));
 	void foreach_regionview (void (RegionView::*method)(void));

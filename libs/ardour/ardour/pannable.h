@@ -1,21 +1,21 @@
 /*
-    Copyright (C) 2011 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2011-2016 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2017 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __libardour_pannable_h__
 #define __libardour_pannable_h__
@@ -25,7 +25,7 @@
 #include <boost/shared_ptr.hpp>
 
 #include "pbd/stateful.h"
-#include "evoral/Parameter.hpp"
+#include "evoral/Parameter.h"
 
 #include "ardour/automatable.h"
 #include "ardour/session_handle.h"
@@ -51,7 +51,7 @@ public:
 	boost::shared_ptr<Panner> panner() const { return _panner.lock(); }
 	void set_panner(boost::shared_ptr<Panner>);
 
-	Session& session() { return _session; }
+	const std::set<Evoral::Parameter>& what_can_be_automated() const;
 
 	void set_automation_state (AutoState);
 	AutoState automation_state() const { return _auto_state; }
@@ -63,8 +63,6 @@ public:
 	bool automation_write () const {
 		return ((_auto_state & Write) || ((_auto_state & (Touch | Latch)) && touching()));
 	}
-
-	std::string value_as_string (boost::shared_ptr<const AutomationControl>) const;
 
 	void start_touch (double when);
 	void stop_touch (double when);

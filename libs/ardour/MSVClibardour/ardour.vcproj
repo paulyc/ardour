@@ -352,6 +352,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\audiorom.cc"
+				>
+			</File>
+			<File
 				RelativePath="..\audiosource.cc"
 				>
 			</File>
@@ -800,6 +804,14 @@
 				>
 			</File>
 			<File
+				RelativePath="..\mp3fileimportable.cc"
+				>
+			</File>
+			<File
+				RelativePath="..\mp3filesource.cc"
+				>
+			</File>
+			<File
 				RelativePath="..\mtc_slave.cc"
 				>
 			</File>
@@ -817,10 +829,6 @@
 			</File>
 			<File
 				RelativePath="..\muteable.cc"
-				>
-			</File>
-			<File
-				RelativePath="..\note_fixer.cc"
 				>
 			</File>
 			<File
@@ -892,6 +900,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\port_engine_shared.cc"
+				>
+			</File>
+			<File
 				RelativePath="..\port_insert.cc"
 				>
 			</File>
@@ -933,6 +945,10 @@
 			</File>
 			<File
 				RelativePath="..\rc_configuration.cc"
+				>
+			</File>
+			<File
+				RelativePath="..\readable.cc"
 				>
 			</File>
 			<File
@@ -992,6 +1008,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\rt_midibuffer.cc"
+				>
+			</File>
+			<File
 				RelativePath="..\rt_tasklist.cc"
 				>
 			</File>
@@ -1023,6 +1043,10 @@
 						WholeProgramOptimization="false"
 					/>
 				</FileConfiguration>
+			</File>
+			<File
+				RelativePath="..\session_bundles.cc"
+				>
 			</File>
 			<File
 				RelativePath="..\session_butler.cc"
@@ -1356,10 +1380,6 @@
 				>
 			</File>
 			<File
-				RelativePath="..\tape_file_matcher.cc"
-				>
-			</File>
-			<File
 				RelativePath="..\template_utils.cc"
 				>
 			</File>
@@ -1389,6 +1409,10 @@
 			</File>
 			<File
 				RelativePath="..\transient_detector.cc"
+				>
+			</File>
+			<File
+				RelativePath="..\transport_fsm.cc"
 				>
 			</File>
 			<File
@@ -1559,6 +1583,10 @@
 			</File>
 			<File
 				RelativePath="..\ardour\audioregion.h"
+				>
+			</File>
+			<File
+				RelativePath="..\ardour\audiorom.h"
 				>
 			</File>
 			<File
@@ -2058,6 +2086,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\ardour\minimp3.h"
+				>
+			</File>
+			<File
 				RelativePath="..\ardour\mix.h"
 				>
 			</File>
@@ -2074,6 +2106,14 @@
 				>
 			</File>
 			<File
+				RelativePath="..\ardour\mp3fileimportable.h"
+				>
+			</File>
+			<File
+				RelativePath="..\ardour\mp3filesource.h"
+				>
+			</File>
+			<File
 				RelativePath="..\ardour\msvc_libardour.h"
 				>
 			</File>
@@ -2083,10 +2123,6 @@
 			</File>
 			<File
 				RelativePath="..\ardour\mute_master.h"
-				>
-			</File>
-			<File
-				RelativePath="..\ardour\note_fixer.h"
 				>
 			</File>
 			<File
@@ -2171,6 +2207,10 @@
 			</File>
 			<File
 				RelativePath="..\ardour\port.h"
+				>
+			</File>
+			<File
+				RelativePath="..\ardour\port_engine_shared.h"
 				>
 			</File>
 			<File
@@ -2287,6 +2327,10 @@
 			</File>
 			<File
 				RelativePath="..\ardour\route_group_specialized.h"
+				>
+			</File>
+			<File
+				RelativePath="..\ardour\rt_midibuffer.h"
 				>
 			</File>
 			<File
@@ -2458,10 +2502,6 @@
 				>
 			</File>
 			<File
-				RelativePath="..\ardour\tape_file_matcher.h"
-				>
-			</File>
-			<File
 				RelativePath="..\ardour\template_utils.h"
 				>
 			</File>
@@ -2503,6 +2543,14 @@
 			</File>
 			<File
 				RelativePath="..\ardour\transient_detector.h"
+				>
+			</File>
+			<File
+				RelativePath="..\ardour\transport_api.h"
+				>
+			</File>
+			<File
+				RelativePath="..\ardour\transport_fsm.h"
 				>
 			</File>
 			<File

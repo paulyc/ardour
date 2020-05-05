@@ -1,21 +1,25 @@
 /*
-    Copyright (C) 2000,2007 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2000-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2007-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2008-2009 Sampo Savolainen <v2@iki.fi>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2018 Johannes Mueller <github@johannes-mueller.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_plugin_insert_h__
 #define __ardour_plugin_insert_h__
@@ -25,6 +29,7 @@
 
 #include <boost/weak_ptr.hpp>
 
+#include "pbd/stack_allocator.h"
 #include "pbd/timing.h"
 
 #include "ardour/ardour.h"
@@ -114,8 +119,6 @@ public:
 	bool inplace () const { return ! _no_inplace; }
 
 	bool is_channelstrip () const;
-	bool is_nonbypassable () const;
-	bool show_on_ctrl_surface () const;
 
 	void set_input_map (uint32_t, ChanMapping);
 	void set_output_map (uint32_t, ChanMapping);
@@ -188,7 +191,7 @@ public:
 			);
 
 	void realtime_handle_transport_stopped ();
-	void realtime_locate ();
+	void realtime_locate (bool);
 	void monitoring_changed ();
 
 	bool load_preset (Plugin::PresetRecord);
@@ -254,7 +257,7 @@ public:
 		return boost::shared_ptr<IO> ();
 	}
 
-	PluginType type ();
+	PluginType type () const;
 
 	boost::shared_ptr<ReadOnlyControl> control_output (uint32_t) const;
 
@@ -368,7 +371,18 @@ private:
 	/* ordered map [plugin instance ID] => ARDOUR::ChanMapping
 	 * TODO: consider replacing with boost::flat_map<> or std::vector<>.
 	 */
-	class PinMappings : public std::map <uint32_t, ARDOUR::ChanMapping> {
+#if defined(_MSC_VER) && (_MSC_VER < 1900)
+	/* Use the older (heap based) mapping for early versions of MSVC.
+	 * In fact it might be safer to use this for all MSVC builds - as
+	 * our StackAllocator class depends on 'boost::aligned_storage'
+	 * which is known to be troublesome with Visual C++ :-
+	 * https://www.boost.org/doc/libs/1_65_0/libs/type_traits/doc/html/boost_typetraits/reference/aligned_storage.html
+	 */
+	class PinMappings : public std::map <uint32_t, ARDOUR::ChanMapping>
+#else
+	class PinMappings : public std::map <uint32_t, ARDOUR::ChanMapping, std::less<uint32_t>, PBD::StackAllocator<std::pair<const uint32_t, ARDOUR::ChanMapping>, 4> >
+#endif
+	{
 		public:
 			/* this emulates C++11's  std::map::at()
 			 * return mapping for given plugin instance */
@@ -412,6 +426,7 @@ private:
 	void latency_changed ();
 	bool _latency_changed;
 	uint32_t _bypass_port;
+	bool     _inverted_bypass_enable;
 
 	typedef std::map<uint32_t, boost::shared_ptr<ReadOnlyControl> >CtrlOutMap;
 	CtrlOutMap _control_outputs;

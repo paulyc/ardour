@@ -1,21 +1,32 @@
 /*
-    Copyright (C) 2002 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2002-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2005 Karsten Wiese <fzuuzf@googlemail.com>
+ * Copyright (C) 2006-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2008-2009 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2010-2011 Sakari Bergen <sakari.bergen@beatwaves.net>
+ * Copyright (C) 2012-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013-2015 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2013-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2013-2018 Colin Fletcher <colin.m.fletcher@googlemail.com>
+ * Copyright (C) 2014-2015 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2015 Len Ovens <len@ovenwerks.net>
+ * Copyright (C) 2017-2019 Ben Loftis <ben@harrisonconsoles.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_types_h__
 #define __ardour_types_h__
@@ -37,7 +48,7 @@
 
 #include "pbd/id.h"
 
-#include "evoral/Range.hpp"
+#include "evoral/Range.h"
 
 #include "ardour/chan_count.h"
 #include "ardour/plugin_types.h"
@@ -113,7 +124,7 @@ enum InsertMergePolicy {
 	InsertMergeExtend   ///< extend new (or old) to the range of old+new
 };
 
-/** See evoral/Parameter.hpp
+/** See evoral/Parameter.h
  *
  * When you add things here, you REALLY SHOULD add a case clause to
  * the constructor of ParameterDescriptor, unless the Controllables
@@ -216,7 +227,8 @@ enum MeterType {
 enum TrackMode {
 	Normal,
 	NonLayered,
-	Destructive
+	/* No longer in use but kept to allow loading of older sessions */
+	Destructive,
 };
 
 enum NoteMode {
@@ -587,10 +599,9 @@ enum TransportRequestSource {
 };
 
 enum TransportRequestType {
-	TR_Stop   = 0x1,
-	TR_Start  = 0x2,
-	TR_Speed  = 0x4,
-	TR_Locate = 0x8
+	TR_StartStop = 0x1,
+	TR_Speed     = 0x2,
+	TR_Locate    = 0x4
 };
 
 enum ShuttleBehaviour {
@@ -645,7 +656,14 @@ enum WaveformShape {
 	Rectified
 };
 
+enum ScreenSaverMode {
+	InhibitNever,
+	InhibitWhileRecording,
+	InhibitAlways
+};
+
 struct CleanupReport {
+	CleanupReport () : space (0) {}
 	std::vector<std::string> paths;
 	size_t                   space;
 };
@@ -682,6 +700,7 @@ struct RouteProcessorChange {
 };
 
 struct BusProfile {
+	BusProfile() : master_out_channels (0) {}
 	uint32_t master_out_channels; /* how many channels for the master bus, 0: no master bus */
 };
 
@@ -715,7 +734,8 @@ enum PortFlags {
 
 	/* non-JACK related flags */
 	Hidden = 0x20,
-	Shadow = 0x40
+	Shadow = 0x40,
+	TransportMasterPort = 0x80
 };
 
 enum MidiPortFlags {
@@ -764,6 +784,27 @@ enum MidiTempoMapDisposition {
 struct CaptureInfo {
 	samplepos_t start;
 	samplecnt_t samples;
+	samplecnt_t loop_offset;
+};
+
+enum LoopFadeChoice {
+	NoLoopFade,
+	EndLoopFade,
+	BothLoopFade,
+	XFadeLoop,
+};
+
+enum OverwriteReason {
+	PlaylistChanged = 0x1,   // actual playlist was swapped/reset
+	PlaylistModified = 0x2,  // contents of playlist changed
+	LoopDisabled = 0x4,
+	LoopChanged = 0x8,
+};
+
+enum LocateTransportDisposition {
+	MustRoll,
+	MustStop,
+	RollIfAppropriate
 };
 
 typedef std::vector<CaptureInfo*> CaptureInfos;

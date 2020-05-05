@@ -1,3 +1,21 @@
+/*
+ * Copyright (C) 2017 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
 #ifndef _WIDGETS_ARDOUR_ICON_H_
 #define _WIDGETS_ARDOUR_ICON_H_
 
@@ -9,28 +27,18 @@
 
 namespace ArdourWidgets { namespace ArdourIcon {
 	enum Icon {
-		NoIcon,
 		RecButton,
-		RecTapeMode,
-		CloseCross,
-		StripWidth,
-		DinMidi,
+		ZoomIn,
+		ZoomOut,
+		ZoomFull,
+		TransportPanic,
 		TransportStop,
 		TransportPlay,
 		TransportLoop,
 		TransportRange,
 		TransportStart,
 		TransportEnd,
-		TransportPanic,
 		TransportMetronom,
-		NudgeLeft,
-		NudgeRight,
-		ZoomIn,
-		ZoomOut,
-		ZoomFull,
-		ZoomExpand,
-		TimeAxisShrink,
-		TimeAxisExpand,
 		ToolGrab,
 		ToolRange,
 		ToolCut,
@@ -38,6 +46,29 @@ namespace ArdourWidgets { namespace ArdourIcon {
 		ToolAudition,
 		ToolDraw,
 		ToolContent,
+		ZoomExpand,
+		TimeAxisShrink,
+		TimeAxisExpand,
+		StripWidth,
+		CloseCross,
+		HideEye,
+		ScrollLeft,
+		ScrollRight,
+		NudgeLeft,
+		NudgeRight,
+		DinMidi,
+		PsetAdd,
+		PsetSave,
+		PsetDelete,
+		PsetBrowse,
+		PluginReset,
+		PluginBypass,
+		PluginPinout,
+		LatencyClock,
+		Config,
+		ConfigReset,
+		PowerOnOff,
+		NoIcon //< Last
 	};
 
 	LIBWIDGETS_API bool render (cairo_t *cr,

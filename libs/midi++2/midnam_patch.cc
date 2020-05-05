@@ -1,20 +1,25 @@
 /*
-    Copyright (C) 2008 Hans Baier
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2008-2012 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2008-2016 David Robillard <d@drobilla.net>
+ * Copyright (C) 2008-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015-2016 Tim Mayberry <mojofunk@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <stdlib.h>
 
@@ -113,7 +118,7 @@ int
 Patch::set_state (const XMLTree& tree, const XMLNode& node)
 {
 	if (node.name() != "Patch") {
-		cerr << "Incorrect node type '" << node.name() << "' handed to Patch" << endl;
+		cerr << "Incorrect node type '" << node.name() << "' handed to Patch" << " contents " << node.content() << endl;
 		return -1;
 	}
 
@@ -838,13 +843,17 @@ MasterDeviceNames::set_state(const XMLTree& tree, const XMLNode&)
 	     i != patch_name_lists->end();
 	     ++i) {
 
+		string n; (*i)->get_property ("Name", n);
+
 		PatchNameList patch_name_list;
 		const XMLNodeList patches = (*i)->children();
 
 		for (XMLNodeList::const_iterator p = patches.begin(); p != patches.end(); ++p) {
 			boost::shared_ptr<Patch> patch (new Patch ());
-			patch->set_state(tree, *(*p));
-			patch_name_list.push_back(patch);
+			// cerr << "Let's try: "; (*(*p)).dump (cerr); cerr << endl;
+			if (0 == patch->set_state(tree, *(*p))) {
+				patch_name_list.push_back(patch);
+			}
 		}
 
 		if (!patch_name_list.empty()) {
@@ -958,138 +967,6 @@ MIDINameDocument::master_device_names(const std::string& model)
 	return boost::shared_ptr<MasterDeviceNames>();
 }
 
-const char* general_midi_program_names[128] = {
-	"Acoustic Grand Piano",
-	"Bright Acoustic Piano",
-	"Electric Grand Piano",
-	"Honky-tonk Piano",
-	"Rhodes Piano",
-	"Chorused Piano",
-	"Harpsichord",
-	"Clavinet",
-	"Celesta",
-	"Glockenspiel",
-	"Music Box",
-	"Vibraphone",
-	"Marimba",
-	"Xylophone",
-	"Tubular Bells",
-	"Dulcimer",
-	"Hammond Organ",
-	"Percussive Organ",
-	"Rock Organ",
-	"Church Organ",
-	"Reed Organ",
-	"Accordion",
-	"Harmonica",
-	"Tango Accordion",
-	"Acoustic Guitar (nylon)",
-	"Acoustic Guitar (steel)",
-	"Electric Guitar (jazz)",
-	"Electric Guitar (clean)",
-	"Electric Guitar (muted)",
-	"Overdriven Guitar",
-	"Distortion Guitar",
-	"Guitar Harmonics",
-	"Acoustic Bass",
-	"Electric Bass (finger)",
-	"Electric Bass (pick)",
-	"Fretless Bass",
-	"Slap Bass 1",
-	"Slap Bass 2",
-	"Synth Bass 1",
-	"Synth Bass 2",
-	"Violin",
-	"Viola",
-	"Cello",
-	"Contrabass",
-	"Tremolo Strings",
-	"Pizzicato Strings",
-	"Orchestral Harp",
-	"Timpani",
-	"String Ensemble 1",
-	"String Ensemble 2",
-	"SynthStrings 1",
-	"SynthStrings 2",
-	"Choir Aahs",
-	"Voice Oohs",
-	"Synth Voice",
-	"Orchestra Hit",
-	"Trumpet",
-	"Trombone",
-	"Tuba",
-	"Muted Trumpet",
-	"French Horn",
-	"Brass Section",
-	"Synth Brass 1",
-	"Synth Brass 2",
-	"Soprano Sax",
-	"Alto Sax",
-	"Tenor Sax",
-	"Baritone Sax",
-	"Oboe",
-	"English Horn",
-	"Bassoon",
-	"Clarinet",
-	"Piccolo",
-	"Flute",
-	"Recorder",
-	"Pan Flute",
-	"Bottle Blow",
-	"Shakuhachi",
-	"Whistle",
-	"Ocarina",
-	"Lead 1 (square)",
-	"Lead 2 (sawtooth)",
-	"Lead 3 (calliope lead)",
-	"Lead 4 (chiff lead)",
-	"Lead 5 (charang)",
-	"Lead 6 (voice)",
-	"Lead 7 (fifths)",
-	"Lead 8 (bass + lead)",
-	"Pad 1 (new age)",
-	"Pad 2 (warm)",
-	"Pad 3 (polysynth)",
-	"Pad 4 (choir)",
-	"Pad 5 (bowed)",
-	"Pad 6 (metallic)",
-	"Pad 7 (halo)",
-	"Pad 8 (sweep)",
-	"FX 1 (rain)",
-	"FX 2 (soundtrack)",
-	"FX 3 (crystal)",
-	"FX 4 (atmosphere)",
-	"FX 5 (brightness)",
-	"FX 6 (goblins)",
-	"FX 7 (echoes)",
-	"FX 8 (sci-fi)",
-	"Sitar",
-	"Banjo",
-	"Shamisen",
-	"Koto",
-	"Kalimba",
-	"Bagpipe",
-	"Fiddle",
-	"Shanai",
-	"Tinkle Bell",
-	"Agogo",
-	"Steel Drums",
-	"Woodblock",
-	"Taiko Drum",
-	"Melodic Tom",
-	"Synth Drum",
-	"Reverse Cymbal",
-	"Guitar Fret Noise",
-	"Breath Noise",
-	"Seashore",
-	"Bird Tweet",
-	"Telephone Ring",
-	"Helicopter",
-	"Applause",
-	"Gunshot",
-};
-
 } //namespace Name
 
 } //namespace MIDI
-

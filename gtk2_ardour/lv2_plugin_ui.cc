@@ -1,21 +1,27 @@
 /*
-    Copyright (C) 2008-2012 Paul Davis
-    Author: David Robillard
+ * Copyright (C) 2008-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2008-2018 David Robillard <d@drobilla.net>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2012-2018 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+#ifdef WAF_BUILD
+#include "gtk2ardour-config.h"
+#endif
 
 #include <gtkmm/stock.h>
 
@@ -133,19 +139,22 @@ LV2PluginUI::set_path_property (int response,
 	active_parameter_requests.erase (desc.key);
 }
 
-uint32_t
-LV2PluginUI::request_parameter (void* handle, LV2_URID key)
+#ifdef HAVE_LV2_1_17_2
+LV2UI_Request_Value_Status
+LV2PluginUI::request_value(void*                     handle,
+                           LV2_URID                  key,
+                           LV2_URID                  type,
+                           const LV2_Feature* const* features)
 {
 	LV2PluginUI* me = (LV2PluginUI*)handle;
 
-	/* This will return `PropertyDescriptors nothing` when not found */
 	const ParameterDescriptor& desc (me->_lv2->get_property_descriptor(key));
-	if (desc.datatype != Variant::PATH) {
-		return 0;
-	}
-
-	if (me->active_parameter_requests.find (key) != me->active_parameter_requests.end()) {
-		return 0; /* already showing dialog */
+	if (desc.key == (uint32_t)-1) {
+		return LV2UI_REQUEST_VALUE_ERR_UNKNOWN;
+	} else if (desc.datatype != Variant::PATH) {
+		return LV2UI_REQUEST_VALUE_ERR_UNSUPPORTED;
+	} else if (me->active_parameter_requests.count (key)) {
+		return LV2UI_REQUEST_VALUE_BUSY;
 	}
 	me->active_parameter_requests.insert (key);
 
@@ -171,8 +180,9 @@ LV2PluginUI::request_parameter (void* handle, LV2_URID key)
 
 	lv2ui_file_dialog->signal_response().connect (sigc::bind (sigc::mem_fun (*me, &LV2PluginUI::set_path_property), desc, lv2ui_file_dialog));
 	lv2ui_file_dialog->present();
-	return 0;
+	return LV2UI_REQUEST_VALUE_SUCCESS;
 }
+#endif
 
 void
 LV2PluginUI::update_timeout()
@@ -303,12 +313,16 @@ LV2PluginUI::LV2PluginUI(boost::shared_ptr<PluginInsert> pi,
 	if (pi->controls().size() > 0) {
 		_ardour_buttons_box.pack_end (reset_button, false, false, 4);
 	}
+	if (has_descriptive_presets ()) {
+		_ardour_buttons_box.pack_end (preset_browser_button, false, false);
+	}
 	_ardour_buttons_box.pack_end (delete_button, false, false);
 	_ardour_buttons_box.pack_end (save_button, false, false);
 	_ardour_buttons_box.pack_end (add_button, false, false);
 	_ardour_buttons_box.pack_end (_preset_combo, false, false);
 	_ardour_buttons_box.pack_end (_preset_modified, false, false);
 	_ardour_buttons_box.pack_end (pin_management_button, false, false);
+	_ardour_buttons_box.pack_start (latency_button, false, false, 4);
 
 	plugin->PresetLoaded.connect (*this, invalidator (*this), boost::bind (&LV2PluginUI::queue_port_update, this), gui_context ());
 }
@@ -335,12 +349,14 @@ LV2PluginUI::lv2ui_instantiate(const std::string& title)
 		features[fi] = features_src[fi];
 	}
 
-	_lv2ui_request_paramater.handle = this;
-	_lv2ui_request_paramater.request = LV2PluginUI::request_parameter;
-	_lv2ui_request_feature.URI  = LV2_UI_PREFIX "requestParameter";
-	_lv2ui_request_feature.data = &_lv2ui_request_paramater;
+#ifdef HAVE_LV2_1_17_2
+	_lv2ui_request_value.handle  = this;
+	_lv2ui_request_value.request = LV2PluginUI::request_value;
+	_lv2ui_request_feature.URI   = LV2_UI__requestValue;
+	_lv2ui_request_feature.data  = &_lv2ui_request_value;
 
 	features[fi++] = &_lv2ui_request_feature;
+#endif
 
 	Gtk::Alignment* container = NULL;
 	if (is_external_ui) {
@@ -373,7 +389,11 @@ LV2PluginUI::lv2ui_instantiate(const std::string& title)
 	}
 
 	features[fi] = NULL;
+#ifdef HAVE_LV2_1_17_2
 	assert (fi == features_count + (is_external_ui ? 3 : 2));
+#else
+	assert (fi == features_count + (is_external_ui ? 2 : 1));
+#endif
 
 	if (!ui_host) {
 		ui_host = suil_host_new(LV2PluginUI::write_from_ui,
@@ -547,9 +567,7 @@ LV2PluginUI::resizable()
 int
 LV2PluginUI::package(Gtk::Window& win)
 {
-	if (_external_ui_ptr) {
-		_win_ptr = &win;
-	} else {
+	if (!_external_ui_ptr) {
 		/* forward configure events to plugin window */
 		win.signal_configure_event().connect(
 			sigc::mem_fun(*this, &LV2PluginUI::configure_handler));

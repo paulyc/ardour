@@ -193,6 +193,7 @@ Locale=$Shared/locale
 MidiMaps=$Shared/midi_maps
 PatchFiles=$Shared/patchfiles
 LuaScripts=$Shared/scripts
+WebSurfaces=$Shared/web_surfaces
 MackieControl=$Shared/mcp
 OSC=$Shared/osc
 
@@ -361,19 +362,19 @@ cp $BUILD_ROOT/libs/surfaces/control_protocol/libardourcp.so* $Libraries
 
 # MidiMaps
 # got to be careful with names here
-for x in $BUILD_ROOT/../midi_maps/*.map ; do
+for x in $BUILD_ROOT/../share/midi_maps/*.map ; do
     cp "$x" $MidiMaps
 done
 
 # MIDNAM Patch Files
 # got to be careful with names here
-for x in $BUILD_ROOT/../patchfiles/*.midnam ; do
+for x in $BUILD_ROOT/../share/patchfiles/*.midnam ; do
     cp "$x" $PatchFiles
 done
 
 # Lua Scripts Files
 # got to be careful with names here
-for x in $BUILD_ROOT/../scripts/*.lua ; do
+for x in $BUILD_ROOT/../share/scripts/*.lua ; do
 		BN=$(basename $x)
 	  if test "${BN:0:1}" = "_"; then
 			continue;
@@ -381,15 +382,19 @@ for x in $BUILD_ROOT/../scripts/*.lua ; do
     cp "$x" $LuaScripts
 done
 
+# recusively copy web-surface html/js
+cp -a $BUILD_ROOT/../share/web_surfaces $WebSurfaces
+rm $WebSurfaces/wscript
+
 # MackieControl data
 # got to be careful with names here
-for x in $BUILD_ROOT/../mcp/*.device $BUILD_ROOT/../mcp/*.profile ; do
+for x in $BUILD_ROOT/../share/mcp/*.device $BUILD_ROOT/../share/mcp/*.profile ; do
     cp "$x" $MackieControl
 done
 
 # OSC data
 # got to be careful with names here
-for x in $BUILD_ROOT/../osc/*.preset ; do
+for x in $BUILD_ROOT/../share/osc/*.preset ; do
     cp "$x" $OSC
 done
 
@@ -400,14 +405,14 @@ for x in $BUILD_ROOT/../mixer_settings/*.lua ; do
 done
 
 #Session templates
-cp -av $BUILD_ROOT/../templates $Templates
+cp -av $BUILD_ROOT/../share/templates $Templates
 
 # PluginMetadata
-cp -av $BUILD_ROOT/../plugin_metadata $PluginMetadata
+cp -av $BUILD_ROOT/../share/plugin_metadata $PluginMetadata
 
 # ExportFormats
 # got to be careful with names here
-for x in $BUILD_ROOT/../export/*.preset $BUILD_ROOT/../export/*.format ; do
+for x in $BUILD_ROOT/../share/export/*.preset $BUILD_ROOT/../share/export/*.format ; do
     cp "$x" $ExportFormats
 done
 
@@ -415,12 +420,13 @@ done
 cp $BUILD_ROOT/libs/panners/*/lib*.so* $Panners
 
 # Backends
-for backend in jack alsa dummy wavesaudio ; do
+for backend in jack alsa dummy wavesaudio pulseaudio; do
     cp $BUILD_ROOT/libs/backends/$backend/lib*.so* $Backends
 done
 
 # VAMP plugins that we use
-cp $BUILD_ROOT/libs/vamp-plugins/libardourvampplugins.so* $Libraries
+cp $BUILD_ROOT/libs/vamp-plugins/libardourvampplugins.so $Libraries
+cp $BUILD_ROOT/libs/vamp-pyin/libardourvamppyin.so $Libraries
 
 # Suil modules (new dir 'build-stack')
 if test -d $GTKSTACK_ROOT/lib/suil-0/ ; then
@@ -471,9 +477,9 @@ for file in $BUILD_ROOT/session_utils/${lower_case_appname}${major_version}-*; d
 	HAVE_SESSION_UTILS=true
 done
 
-if test -x $BUILD_ROOT/tools/luadevel/luasession; then
+if test -x $BUILD_ROOT/luasession/luasession; then
 	BN=${lower_case_appname}${major_version}-lua
-	cp -v $BUILD_ROOT/tools/luadevel/luasession $APPLIB/$BN
+	cp -v $BUILD_ROOT/luasession/luasession $APPLIB/$BN
 	if test x$STRIP = xall ; then
 		strip -s $APPLIB/${BN}
 	fi
@@ -557,12 +563,15 @@ while [ true ] ; do
 
 			# don't use anything mapped at a specific address
 			if echo $dep | grep -qs '0x' ; then continue; fi
-			# don't include /lib
+			# don't include any distro libraries
 			if echo $dep | grep -qs "^/lib/" ; then continue; fi
-			# don't include jack
+			if echo $dep | grep -qs "^/usr/lib/" ; then continue; fi
+			if echo $dep | grep -qs "^/usr/local/lib/" ; then continue; fi
+			## the following re likley redudant ##
+			# skip jack, ALSA & pulse
 			if echo $dep | grep -qs libjack ; then continue; fi
-			# don't include ALSA
 			if echo $dep | grep -qs libasound ; then continue; fi
+			if echo $dep | grep -qs libpulse ; then continue; fi
 			# don't include any X Window libraries
 			if echo $dep | grep -qs libX\. ; then continue; fi
 			if echo $dep | grep -qs libxcb ; then continue; fi
@@ -643,6 +652,7 @@ cp ../../system_config $Etc/system_config
 cp ../../gtk2_ardour/icons/*.png ${Shared}/icons
 cp -r ../../gtk2_ardour/icons/cursor_* ${Shared}/icons/
 cp ../../gtk2_ardour/ArdourMono.ttf $Shared
+cp ../../gtk2_ardour/ArdourSans.ttf $Shared
 cp ../../gtk2_ardour/resources/${APPNAME}-* ${Shared}/resources/
 
 # Themes: only install those named for this app
@@ -737,7 +747,7 @@ if test x$WITH_X42_LV2 != x ; then
 
 	echo "Adding x42 Plugins"
 
-	for proj in x42-meters x42-midifilter x42-midimap x42-stereoroute x42-eq setBfree x42-avldrums x42-whirl x42-limiter; do
+	for proj in x42-meters x42-midifilter x42-stereoroute x42-eq setBfree x42-avldrums x42-whirl x42-limiter x42-tuner; do
 		X42_VERSION=$(curl -s -S http://x42-plugins.com/x42/linux/${proj}.latest.txt)
 		rsync -a -q --partial \
 			rsync://x42-plugins.com/x42/linux/${proj}-lv2-linux-${WARCH}-${X42_VERSION}.zip \

@@ -1,21 +1,32 @@
 /*
-    Copyright (C) 2000-2007 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2006 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2005-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2005 Karsten Wiese <fzuuzf@googlemail.com>
+ * Copyright (C) 2006-2007 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2006 Hans Fugal <hans@fugal.net>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2007-2015 David Robillard <d@drobilla.net>
+ * Copyright (C) 2009 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2014-2015 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2014-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2014-2017 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015-2017 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2016 Julien "_FrnchFrgg_" RIVAUD <frnchfrgg@free.fr>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <utility>
 
@@ -167,8 +178,7 @@ AutomationTimeAxisView::AutomationTimeAxisView (
 	auto_dropdown.AddMenuElem (MenuElem (_("Play"), sigc::bind (sigc::mem_fun(*this,
 						&AutomationTimeAxisView::set_automation_state), (AutoState) Play)));
 
-	if (!(_parameter.type() >= MidiCCAutomation &&
-	      _parameter.type() <= MidiChannelPressureAutomation)) {
+	if (!parameter_is_midi(_parameter.type ())) {
 		auto_dropdown.AddMenuElem (MenuElem (_("Write"), sigc::bind (sigc::mem_fun(*this, &AutomationTimeAxisView::set_automation_state), (AutoState) Write)));
 		auto_dropdown.AddMenuElem (MenuElem (_("Touch"), sigc::bind (sigc::mem_fun(*this, &AutomationTimeAxisView::set_automation_state), (AutoState) Touch)));
 		auto_dropdown.AddMenuElem (MenuElem (_("Latch"), sigc::bind (sigc::mem_fun(*this, &AutomationTimeAxisView::set_automation_state), (AutoState) Latch)));
@@ -216,9 +226,10 @@ AutomationTimeAxisView::AutomationTimeAxisView (
 	name_label.set_alignment (Gtk::ALIGN_LEFT, Gtk::ALIGN_CENTER);
 	name_label.set_name (X_("TrackParameterName"));
 	name_label.set_ellipsize (Pango::ELLIPSIZE_END);
+	name_label.set_size_request (floor (50.0 * UIConfiguration::instance().get_ui_scale()), -1);
 
 	/* add the buttons */
-	controls_table.set_border_width (1);
+	controls_table.set_border_width (0);
 	controls_table.attach (hide_button, 1, 2, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
 	controls_table.attach (name_label,  2, 3, 1, 3, Gtk::FILL|Gtk::EXPAND, Gtk::FILL|Gtk::EXPAND, 2, 0);
 	controls_table.attach (auto_dropdown, 3, 4, 2, 3, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
@@ -321,6 +332,7 @@ AutomationTimeAxisView::~AutomationTimeAxisView ()
 		cleanup_gui_properties ();
 	}
 	delete _view;
+	CatchDeletion (this);
 }
 
 void
@@ -562,6 +574,22 @@ AutomationTimeAxisView::set_height (uint32_t h, TrackHeightMode m)
 }
 
 void
+AutomationTimeAxisView::update_name_from_param ()
+{
+	/* Note that this is intended for MidiTrack::describe_parameter()
+	 * -> instrument_info().get_controller_name()
+	 * It does not work with  parent/plug_name for plugins.
+	 */
+	boost::shared_ptr<ARDOUR::Route> r = boost::dynamic_pointer_cast<ARDOUR::Route> (_stripable);
+	if (!r) {
+		return;
+	}
+	_name = r->describe_parameter(_parameter);
+	set_tooltip (controls_ebox, _name);
+	name_label.set_text (_name);
+}
+
+void
 AutomationTimeAxisView::set_samples_per_pixel (double fpp)
 {
 	TimeAxisView::set_samples_per_pixel (fpp);
@@ -590,7 +618,7 @@ AutomationTimeAxisView::hide_clicked ()
 string
 AutomationTimeAxisView::automation_state_off_string () const
 {
-	if (_parameter.type() >= MidiCCAutomation && _parameter.type() <= MidiChannelPressureAutomation) {
+	if (parameter_is_midi(_parameter.type ())) {
 		return S_("Automation|Off");
 	}
 
@@ -631,8 +659,7 @@ AutomationTimeAxisView::build_display_menu ()
 			(AutoState) Play)));
 	auto_play_item = dynamic_cast<Gtk::CheckMenuItem*>(&as_items.back());
 
-	if (!(_parameter.type() >= MidiCCAutomation &&
-	      _parameter.type() <= MidiChannelPressureAutomation)) {
+	if (!parameter_is_midi(_parameter.type ())) {
 		as_items.push_back (CheckMenuElem (_("Write"), sigc::bind (
 			                                   sigc::mem_fun(*this, &AutomationTimeAxisView::set_automation_state),
 			                                   (AutoState) Write)));
@@ -941,11 +968,7 @@ AutomationTimeAxisView::propagate_time_selection () const
 	/* MIDI automation is part of the MIDI region. It is always
 	 * implicily selected with the parent, regardless of TAV selection
 	 */
-	if (_parameter.type() >= MidiCCAutomation &&
-	    _parameter.type() <= MidiChannelPressureAutomation) {
-		return true;
-	}
-	return false;
+	return parameter_is_midi(_parameter.type ());
 }
 
 void
@@ -995,35 +1018,6 @@ int
 AutomationTimeAxisView::set_state (const XMLNode&, int /*version*/)
 {
 	return 0;
-}
-
-void
-AutomationTimeAxisView::what_has_visible_automation (const boost::shared_ptr<Automatable>& automatable, set<Evoral::Parameter>& visible)
-{
-	/* this keeps "knowledge" of how we store visibility information
-	   in XML private to this class.
-	*/
-
-	assert (automatable);
-
-	Automatable::Controls& controls (automatable->controls());
-
-	for (Automatable::Controls::iterator i = controls.begin(); i != controls.end(); ++i) {
-
-		boost::shared_ptr<AutomationControl> ac = boost::dynamic_pointer_cast<AutomationControl> (i->second);
-
-		if (ac && ac->alist()) {
-
-			const XMLNode* gui_node = ac->extra_xml ("GUI");
-
-			if (gui_node) {
-				bool shown;
-				if (gui_node->get_property ("shown", shown) && shown) {
-					visible.insert (i->first);
-				}
-			}
-		}
-	}
 }
 
 

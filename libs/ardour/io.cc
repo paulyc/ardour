@@ -1,20 +1,28 @@
 /*
-    Copyright (C) 2000-2006 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2000-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2006 Jesse Chappell <jesse@essej.net>
+ * Copyright (C) 2007-2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2013-2015 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2013-2016 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015 GZharun <grygoriiz@wavesglobal.com>
+ * Copyright (C) 2016-2017 Julien "_FrnchFrgg_" RIVAUD <frnchfrgg@free.fr>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <algorithm>
 #include <cmath>
@@ -200,6 +208,21 @@ IO::connect (boost::shared_ptr<Port> our_port, string other_port, void* src)
 	return 0;
 }
 
+bool
+IO::can_add_port (DataType type) const
+{
+	switch (type) {
+		case DataType::NIL:
+			return false;
+		case DataType::AUDIO:
+			return true;
+		case DataType::MIDI:
+			return _ports.count ().n_midi() < 1;
+	}
+	abort(); /*NOTREACHED*/
+	return false;
+}
+
 int
 IO::remove_port (boost::shared_ptr<Port> port, void* src)
 {
@@ -208,7 +231,7 @@ IO::remove_port (boost::shared_ptr<Port> port, void* src)
 	after.set (port->type(), after.get (port->type()) - 1);
 
 	boost::optional<bool> const r = PortCountChanging (after); /* EMIT SIGNAL */
-	if (r.get_value_or (false)) {
+	if (r.value_or (false)) {
 		return -1;
 	}
 
@@ -267,6 +290,10 @@ IO::add_port (string destination, void* src, DataType type)
 
 	if (type == DataType::NIL) {
 		type = _default_type;
+	}
+
+	if (!can_add_port (type)) {
+		return -1;
 	}
 
 	ChanCount before = _ports.count ();
@@ -536,8 +563,6 @@ IO::state ()
 		node->add_child_nocopy (*pnode);
 	}
 
-	Latent::add_state (node);
-
 	return *node;
 }
 
@@ -612,8 +637,6 @@ IO::set_state (const XMLNode& node, int version)
 		ConnectingLegal.connect_same_thread (connection_legal_c, boost::bind (&IO::connecting_became_legal, this));
 	}
 
-	Latent::set_state (node, version);
-
 	return 0;
 }
 
@@ -677,10 +700,7 @@ IO::connecting_became_legal ()
 
 	connection_legal_c.disconnect ();
 
-	// it's not required for TracksLive, as long as TracksLive's session does all the connections when it's being loaded
-	if (!Profile->get_trx() ) {
-		ret = make_connections (*pending_state_node, pending_state_node_version, pending_state_node_in);
-	}
+	ret = make_connections (*pending_state_node, pending_state_node_version, pending_state_node_in);
 
 	delete pending_state_node;
 	pending_state_node = 0;
@@ -1249,17 +1269,17 @@ IO::latency () const
 	for (PortSet::const_iterator i = _ports.begin(); i != _ports.end(); ++i) {
 		samplecnt_t latency;
 		if ((latency = i->private_latency_range (_direction == Output).max) > max_latency) {
-			DEBUG_TRACE (DEBUG::Latency, string_compose ("port %1 has %2 latency of %3 - use\n",
-			                                             name(),
-			                                             ((_direction == Output) ? "PLAYBACK" : "CAPTURE"),
-			                                             latency));
+			DEBUG_TRACE (DEBUG::LatencyIO, string_compose ("port %1 has %2 latency of %3 - use\n",
+			                                               name(),
+			                                               ((_direction == Output) ? "PLAYBACK" : "CAPTURE"),
+			                                               latency));
 			max_latency = latency;
 		}
 	}
 
-	DEBUG_TRACE (DEBUG::Latency, string_compose ("%1: max %4 latency from %2 ports = %3\n",
-	                                             name(), _ports.num_ports(), max_latency,
-	                                             ((_direction == Output) ? "PLAYBACK" : "CAPTURE")));
+	DEBUG_TRACE (DEBUG::LatencyIO, string_compose ("%1: max %4 latency from %2 ports = %3\n",
+	                                               name(), _ports.num_ports(), max_latency,
+	                                               ((_direction == Output) ? "PLAYBACK" : "CAPTURE")));
 	return max_latency;
 }
 
@@ -1273,17 +1293,17 @@ IO::public_latency () const
 	for (PortSet::const_iterator i = _ports.begin(); i != _ports.end(); ++i) {
 		samplecnt_t latency;
 		if ((latency = i->public_latency_range (_direction == Output).max) > max_latency) {
-			DEBUG_TRACE (DEBUG::Latency, string_compose ("port %1 has %2 latency of %3 - use\n",
-			                                             name(),
-			                                             ((_direction == Output) ? "PLAYBACK" : "CAPTURE"),
-			                                             latency));
+			DEBUG_TRACE (DEBUG::LatencyIO, string_compose ("port %1 has %2 latency of %3 - use\n",
+			                                               name(),
+			                                               ((_direction == Output) ? "PLAYBACK" : "CAPTURE"),
+			                                               latency));
 			max_latency = latency;
 		}
 	}
 
-	DEBUG_TRACE (DEBUG::Latency, string_compose ("%1: max %4 public latency from %2 ports = %3\n",
-	                                             name(), _ports.num_ports(), max_latency,
-	                                             ((_direction == Output) ? "PLAYBACK" : "CAPTURE")));
+	DEBUG_TRACE (DEBUG::LatencyIO, string_compose ("%1: max %4 public latency from %2 ports = %3\n",
+	                                               name(), _ports.num_ports(), max_latency,
+	                                               ((_direction == Output) ? "PLAYBACK" : "CAPTURE")));
 	return max_latency;
 }
 
@@ -1378,7 +1398,7 @@ IO::enable_connecting ()
 	Glib::Threads::Mutex::Lock lm (AudioEngine::instance()->process_lock());
 	connecting_legal = true;
 	boost::optional<int> r = ConnectingLegal ();
-	return r.get_value_or (0);
+	return r.value_or (0);
 }
 
 void

@@ -1,19 +1,19 @@
-/* a-fluidsynth -- simple & robust x-platform fluidsynth LV2
- *
- * Copyright (C) 2016 Robin Gareus <robin@gareus.org>
+/*
+ * Copyright (C) 2016-2019 Robin Gareus <robin@gareus.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2, or (at your option)
- * any later version.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 #ifndef _GNU_SOURCE
@@ -310,6 +310,16 @@ instantiate (const LV2_Descriptor*     descriptor,
 		return NULL;
 	}
 
+#ifdef LV2_EXTENDED
+	if (!self->midnam) {
+		lv2_log_warning (&self->logger, "a-fluidsynth.lv2: Host does not support midnam:update\n");
+	}
+
+	if (!self->bankpatch) {
+		lv2_log_warning (&self->logger, "a-fluidsynth.lv2: Host does not support bankpatch:notify\n");
+	}
+#endif
+
 	/* initialize fluid synth */
 	self->settings = new_fluid_settings ();
 
@@ -504,7 +514,7 @@ run (LV2_Handle instance, uint32_t n_samples)
 			}
 		}
 		else if (ev->body.type == self->midi_MidiEvent) {
-			if (ev->body.size > 3 || ev->time.frames >= n_samples) {
+			if (ev->body.size > 3 || ev->time.frames >= n_samples || self->reinit_in_progress) {
 				continue;
 			}
 
@@ -581,7 +591,8 @@ run (LV2_Handle instance, uint32_t n_samples)
 		inform_ui (self);
 
 #ifdef LV2_EXTENDED
-		self->midnam->update (self->midnam->handle);
+		if (self->midnam)
+			self->midnam->update (self->midnam->handle);
 #endif
 	}
 
@@ -716,7 +727,10 @@ save (LV2_Handle                instance,
 		return LV2_STATE_ERR_NO_PROPERTY;
 	}
 
-	LV2_State_Map_Path* map_path = NULL;
+	LV2_State_Map_Path*  map_path = NULL;
+#ifdef LV2_STATE__freePath
+	LV2_State_Free_Path* free_path = NULL;
+#endif
 
 	for (int i = 0; features[i]; ++i) {
 		if (!strcmp (features[i]->URI, LV2_STATE__mapPath)) {
@@ -732,10 +746,16 @@ save (LV2_Handle                instance,
 	store (handle, self->afs_sf2file,
 			apath, strlen (apath) + 1,
 			self->atom_Path, LV2_STATE_IS_POD);
-
-#ifndef _WIN32 // TODO need lilv_free() -- https://github.com/drobilla/lilv/issues/14
-	free (apath);
+#ifdef LV2_STATE__freePath
+	if (free_path) {
+		free_path->free_path (free_path->handle, apath);
+	} else
 #endif
+	{
+#ifndef _WIN32 // https://github.com/drobilla/lilv/issues/14
+		free (apath);
+#endif
+	}
 
 	return LV2_STATE_SUCCESS;
 }
@@ -753,12 +773,20 @@ restore (LV2_Handle                  instance,
 		return LV2_STATE_ERR_UNKNOWN;
 	}
 
-	LV2_State_Map_Path* map_path = NULL;
+	LV2_State_Map_Path*  map_path = NULL;
+#ifdef LV2_STATE__freePath
+	LV2_State_Free_Path* free_path = NULL;
+#endif
 
 	for (int i = 0; features[i]; ++i) {
 		if (!strcmp (features[i]->URI, LV2_STATE__mapPath)) {
 			map_path = (LV2_State_Map_Path*) features[i]->data;
 		}
+#ifdef LV2_STATE__freePath
+		else if (!strcmp(features[i]->URI, LV2_STATE__freePath)) {
+			free_path = (LV2_State_Free_Path*)features[i]->data;
+		}
+#endif
 	}
 
 	if (!map_path) {
@@ -773,12 +801,18 @@ restore (LV2_Handle                  instance,
 	if (value) {
 		char* apath = map_path->absolute_path (map_path->handle, (const char*) value);
 		strncpy (self->queue_sf2_file_path, apath, 1023);
-		printf ("XXX %s -> %s\n", (const char*) value, apath);
 		self->queue_sf2_file_path[1023] = '\0';
 		self->queue_reinit = true;
-#ifndef _WIN32 // TODO need lilv_free() -- https://github.com/drobilla/lilv/issues/14
-		free (apath);
+#ifdef LV2_STATE__freePath
+		if (free_path) {
+			free_path->free_path (free_path->handle, apath);
+		} else
 #endif
+		{
+#ifndef _WIN32 // https://github.com/drobilla/lilv/issues/14
+			free (apath);
+#endif
+		}
 	}
 	return LV2_STATE_SUCCESS;
 }
@@ -865,12 +899,18 @@ mn_file (LV2_Handle instance)
 	pf ("    </ChannelNameSet>\n");
 
 	pf ("    <ControlNameList Name=\"Controls\">\n");
+	pf ("       <Control Type=\"7bit\" Number=\"1\" Name=\"Modulation\"/>\n");
+	pf ("       <Control Type=\"7bit\" Number=\"2\" Name=\"Breath\"/>\n");
+	pf ("       <Control Type=\"7bit\" Number=\"5\" Name=\"Portamento Time\"/>\n");
 	pf ("       <Control Type=\"7bit\" Number=\"7\" Name=\"Channel Volume\"/>\n");
+	pf ("       <Control Type=\"7bit\" Number=\"8\" Name=\"Stereo Balance\"/>\n");
 	pf ("       <Control Type=\"7bit\" Number=\"10\" Name=\"Pan\"/>\n");
-	pf ("       <Control Type=\"7bit\" Number=\"39\" Name=\"Channel Volume (Fine)\"/>\n");
-	pf ("       <Control Type=\"7bit\" Number=\"42\" Name=\"Pan (Fine)\"/>\n");
-	pf ("       <Control Type=\"7bit\" Number=\"64\" Name=\"Damper Pedal (Sustain)\"/>\n");
-	pf ("       <Control Type=\"7bit\" Number=\"66\" Name=\"Sostenuto\"/>\n");
+	pf ("       <Control Type=\"7bit\" Number=\"11\" Name=\"Expression\"/>\n");
+	pf ("       <Control Type=\"7bit\" Number=\"37\" Name=\"Portamento Time (Fine)\"/>\n");
+	pf ("       <Control Type=\"7bit\" Number=\"64\" Name=\"Sustain On/Off\"/>\n");
+	pf ("       <Control Type=\"7bit\" Number=\"65\" Name=\"Portamento On/Off\"/>\n");
+	pf ("       <Control Type=\"7bit\" Number=\"66\" Name=\"Sostenuto On/Off\"/>\n");
+	pf ("       <Control Type=\"7bit\" Number=\"68\" Name=\"Legato On/Off\"/>\n");
 	pf ("       <Control Type=\"7bit\" Number=\"91\" Name=\"Reverb\"/>\n");
 	pf ("       <Control Type=\"7bit\" Number=\"93\" Name=\"Chorus\"/>\n");
 	pf ("    </ControlNameList>\n");

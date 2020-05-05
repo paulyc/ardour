@@ -1,21 +1,27 @@
 /*
-    Copyright (C) 2006 Paul Davis
-    Author: David Robillard
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2006-2016 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2007-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2008-2012 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2013-2016 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2015-2018 Ben Loftis <ben@harrisonconsoles.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 #include <cmath>
 
 #ifdef COMPILER_MSVC
@@ -80,6 +86,9 @@ MidiTrack::MidiTrack (Session& sess, string name, TrackMode mode)
 	, _input_active (true)
 {
 	_session.SessionLoaded.connect_same_thread (*this, boost::bind (&MidiTrack::restore_controls, this));
+
+	_playback_filter.ChannelModeChanged.connect_same_thread (*this, boost::bind (&Track::playlist_modified, this));
+	_playback_filter.ChannelMaskChanged.connect_same_thread (*this, boost::bind (&Track::playlist_modified, this));
 }
 
 MidiTrack::~MidiTrack ()
@@ -342,7 +351,7 @@ MidiTrack::no_roll_unlocked (pframes_t nframes, samplepos_t start_sample, sample
 }
 
 void
-MidiTrack::realtime_locate ()
+MidiTrack::realtime_locate (bool for_loop_end)
 {
 	Glib::Threads::RWLock::ReaderLock lm (_processor_lock, Glib::Threads::TRY_LOCK);
 
@@ -351,10 +360,8 @@ MidiTrack::realtime_locate ()
 	}
 
 	for (ProcessorList::iterator i = _processors.begin(); i != _processors.end(); ++i) {
-		(*i)->realtime_locate ();
+		(*i)->realtime_locate (for_loop_end);
 	}
-
-	_disk_reader->reset_tracker ();
 }
 
 void
@@ -447,19 +454,18 @@ MidiTrack::snapshot_out_of_band_data (samplecnt_t nframes)
 
 	assert (nframes > 0);
 
-	DEBUG_TRACE (DEBUG::MidiIO, string_compose ("%1 has %2 of immediate events to deliver\n",
-				name(), _immediate_events.read_space()));
+	DEBUG_TRACE (DEBUG::MidiIO, string_compose ("%1 has %2 of immediate events to deliver\n", name(), _immediate_events.read_space()));
 
 	/* write as many of the immediate events as we can, but give "true" as
 	 * the last argument ("stop on overflow in destination") so that we'll
 	 * ship the rest out next time.
 	 *
-	 * the Port::port_offset() + (nframes-1) argument puts all these events at the last
+	 * the (nframes-1) argument puts all these events at the last
 	 * possible position of the output buffer, so that we do not
-	 * violate monotonicity when writing. Port::port_offset() will
-	 * be non-zero if we're in a split process cycle.
+	 * violate monotonicity when writing.
 	 */
-	_immediate_events.read (_immediate_event_buffer, 0, 1, Port::port_offset() + nframes - 1, true);
+
+	_immediate_events.read (_immediate_event_buffer, 0, 1, nframes - 1, true);
 }
 
 void
@@ -476,7 +482,8 @@ MidiTrack::export_stuff (BufferSet&                   buffers,
                          boost::shared_ptr<Processor> endpoint,
                          bool                         include_endpoint,
                          bool                         for_export,
-                         bool                         for_freeze)
+                         bool                         for_freeze,
+                         MidiStateTracker&            tracker)
 {
 	if (buffers.count().n_midi() == 0) {
 		return -1;
@@ -488,22 +495,33 @@ MidiTrack::export_stuff (BufferSet&                   buffers,
 	if (!mpl) {
 		return -2;
 	}
-	mpl->reset_note_trackers (); // TODO once at start and end ?
 
 	buffers.get_midi(0).clear();
-	if (mpl->read(buffers.get_midi(0), start, nframes, 0) != nframes) {
-		return -1;
-	}
+
+	/* Can't use a note tracker here, because the note off's might be in a
+	 * subsequent call
+	 */
+
+	MidiStateTracker ignored;
+
+	/* XXX this doesn't fail, other than if the lock cannot be obtained */
+	mpl->rendered()->read (buffers.get_midi(0), start, start+nframes, ignored, start);
+
+	MidiBuffer& buf = buffers.get_midi(0);
 
 	if (endpoint && !for_export) {
-		MidiBuffer& buf = buffers.get_midi(0);
 		for (MidiBuffer::iterator i = buf.begin(); i != buf.end(); ++i) {
 			MidiBuffer::TimeType *t = i.timeptr ();
 			*t -= start;
 		}
 		bounce_process (buffers, start, nframes, endpoint, include_endpoint, for_export, for_freeze);
 	}
-	mpl->reset_note_trackers ();
+
+	/* Add to tracker so that we can resolve at the end of the export (in Session::write_one_track()) */
+
+	for (MidiBuffer::iterator i = buf.begin(); i != buf.end(); ++i) {
+		tracker.track (*i);
+	}
 
 	return 0;
 }
@@ -811,7 +829,7 @@ MidiTrack::act_on_mute ()
 		}
 
 		/* Resolve active notes. */
-		_disk_reader->resolve_tracker(_immediate_events, Port::port_offset());
+		_disk_reader->resolve_tracker (_immediate_events, 0);
 	}
 }
 
@@ -857,4 +875,17 @@ void
 MidiTrack::filter_input (BufferSet& bufs)
 {
 	_capture_filter.filter (bufs);
+}
+
+void
+MidiTrack::realtime_handle_transport_stopped ()
+{
+	Route::realtime_handle_transport_stopped ();
+	_disk_reader->resolve_tracker (_immediate_events, 0);
+}
+
+void
+MidiTrack::playlist_contents_changed ()
+
+{
 }

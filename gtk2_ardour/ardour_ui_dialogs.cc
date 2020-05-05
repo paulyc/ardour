@@ -1,21 +1,29 @@
 /*
-    Copyright (C) 2000 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2006 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2005-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2016 David Robillard <d@drobilla.net>
+ * Copyright (C) 2006 Hans Fugal <hans@fugal.net>
+ * Copyright (C) 2006 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2007-2015 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2007 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2013-2020 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2014-2018 Ben Loftis <ben@harrisonconsoles.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 /* This file contains any ARDOUR_UI methods that require knowledge of
    the various dialog boxes, and exists so that no compilation dependency
@@ -74,6 +82,7 @@
 #include "time_info_box.h"
 #include "timers.h"
 #include "transport_masters_dialog.h"
+#include "virtual_keyboard_window.h"
 
 #include "pbd/i18n.h"
 
@@ -89,11 +98,30 @@ ARDOUR_UI::set_session (Session *s)
 {
 	SessionHandlePtr::set_session (s);
 
+	/* adjust sensitivity of menu bar options to reflect presence/absence
+	 * of session
+	 */
+
+	ActionManager::set_sensitive (ActionManager::session_sensitive_actions, _session);
+	ActionManager::set_sensitive (ActionManager::write_sensitive_actions, _session ? _session->writable() : false);
+
+	if (_session && _session->locations()->num_range_markers()) {
+		ActionManager::set_sensitive (ActionManager::range_sensitive_actions, true);
+	} else {
+		ActionManager::set_sensitive (ActionManager::range_sensitive_actions, false);
+	}
+
 	transport_ctrl.set_session (s);
 
 	if (big_transport_window) {
 		big_transport_window->set_session (s);
 	}
+
+	if (virtual_keyboard_window) {
+		virtual_keyboard_window->set_session (s);
+	}
+
+	update_path_label ();
 
 	if (!_session) {
 		WM::Manager::instance().set_session (s);
@@ -101,6 +129,8 @@ ARDOUR_UI::set_session (Session *s)
 		session_option_editor.drop_window ();
 		/* Ditto for AddVideoDialog */
 		add_video_dialog.drop_window ();
+		/* screensaver + layered button sensitivity */
+		map_transport_state ();
 		return;
 	}
 
@@ -133,16 +163,13 @@ ARDOUR_UI::set_session (Session *s)
 	transport_masters_window->set_session (s);
 	rc_option_editor->set_session (s);
 
-	/* sensitize menu bar options that are now valid */
-
-	ActionManager::set_sensitive (ActionManager::session_sensitive_actions, true);
-	ActionManager::set_sensitive (ActionManager::write_sensitive_actions, _session->writable());
-
-	if (_session->locations()->num_range_markers()) {
-		ActionManager::set_sensitive (ActionManager::range_sensitive_actions, true);
-	} else {
-		ActionManager::set_sensitive (ActionManager::range_sensitive_actions, false);
-	}
+	roll_controllable->set_session (s);
+	stop_controllable->set_session (s);
+	goto_start_controllable->set_session (s);
+	goto_end_controllable->set_session (s);
+	auto_loop_controllable->set_session (s);
+	play_selection_controllable->set_session (s);
+	rec_controllable->set_session (s);
 
 	/* allow wastebasket flush again */
 
@@ -175,12 +202,18 @@ ARDOUR_UI::set_session (Session *s)
 	_session->TransportStateChange.connect (_session_connections, MISSING_INVALIDATOR, boost::bind (&ARDOUR_UI::map_transport_state, this), gui_context());
 	_session->DirtyChanged.connect (_session_connections, MISSING_INVALIDATOR, boost::bind (&ARDOUR_UI::session_dirty_changed, this), gui_context());
 
+	_session->PunchLoopConstraintChange.connect (_session_connections, MISSING_INVALIDATOR, boost::bind (&ARDOUR_UI::set_punch_sensitivity, this), gui_context());
+	_session->auto_punch_location_changed.connect (_session_connections, MISSING_INVALIDATOR, boost::bind (&ARDOUR_UI::set_punch_sensitivity, this), gui_context ());
+
 	_session->Xrun.connect (_session_connections, MISSING_INVALIDATOR, boost::bind (&ARDOUR_UI::xrun_handler, this, _1), gui_context());
 	_session->SoloActive.connect (_session_connections, MISSING_INVALIDATOR, boost::bind (&ARDOUR_UI::soloing_changed, this, _1), gui_context());
 	_session->AuditionActive.connect (_session_connections, MISSING_INVALIDATOR, boost::bind (&ARDOUR_UI::auditioning_changed, this, _1), gui_context());
 	_session->locations()->added.connect (_session_connections, MISSING_INVALIDATOR, boost::bind (&ARDOUR_UI::handle_locations_change, this, _1), gui_context());
 	_session->locations()->removed.connect (_session_connections, MISSING_INVALIDATOR, boost::bind (&ARDOUR_UI::handle_locations_change, this, _1), gui_context());
 	_session->config.ParameterChanged.connect (_session_connections, MISSING_INVALIDATOR, boost::bind (&ARDOUR_UI::session_parameter_changed, this, _1), gui_context ());
+
+	_session->LatencyUpdated.connect (_session_connections, MISSING_INVALIDATOR, boost::bind (&ARDOUR_UI::session_latency_updated, this, _1), gui_context());
+	session_latency_updated (true);
 
 	/* Clocks are on by default after we are connected to a session, so show that here.
 	*/
@@ -215,31 +248,31 @@ ARDOUR_UI::set_session (Session *s)
 		editor_meter_table.remove(*editor_meter);
 		delete editor_meter;
 		editor_meter = 0;
-		editor_meter_peak_display.hide();
 	}
 
 	if (editor_meter_table.get_parent()) {
 		transport_hbox.remove (editor_meter_table);
+	}
+	if (editor_meter_peak_display.get_parent ()) {
+		editor_meter_table.remove (editor_meter_peak_display);
 	}
 
 	if (_session &&
 	    _session->master_out() &&
 	    _session->master_out()->n_outputs().n(DataType::AUDIO) > 0) {
 
-		if (!ARDOUR::Profile->get_trx()) {
-			editor_meter = new LevelMeterHBox(_session);
-			editor_meter->set_meter (_session->master_out()->shared_peak_meter().get());
-			editor_meter->clear_meters();
-			editor_meter->setup_meters (30, 10, 6);
-			editor_meter->show();
+		editor_meter = new LevelMeterHBox(_session);
+		editor_meter->set_meter (_session->master_out()->shared_peak_meter().get());
+		editor_meter->clear_meters();
+		editor_meter->setup_meters (30, 10, 6);
+		editor_meter->show();
 
-			editor_meter_table.set_spacings(3);
-			editor_meter_table.attach(*editor_meter,             0,1, 0,1, FILL, FILL);
-			editor_meter_table.attach(editor_meter_peak_display, 0,1, 1,2, FILL, EXPAND|FILL);
+		editor_meter_table.set_spacings(3);
+		editor_meter_table.attach(*editor_meter,             0,1, 0,1, FILL, EXPAND|FILL, 0, 1);
+		editor_meter_table.attach(editor_meter_peak_display, 0,1, 1,2, FILL, SHRINK, 0, 0);
 
-			editor_meter->show();
-			editor_meter_peak_display.show();
-		}
+		editor_meter->show();
+		editor_meter_peak_display.show();
 
 		ArdourMeter::ResetAllPeakDisplays.connect (sigc::mem_fun(*this, &ARDOUR_UI::reset_peak_display));
 		ArdourMeter::ResetRoutePeakDisplays.connect (sigc::mem_fun(*this, &ARDOUR_UI::reset_route_peak_display));
@@ -247,10 +280,10 @@ ARDOUR_UI::set_session (Session *s)
 
 		editor_meter_peak_display.set_name ("meterbridge peakindicator");
 		editor_meter_peak_display.unset_flags (Gtk::CAN_FOCUS);
-		editor_meter_peak_display.set_size_request (-1, std::max(6.f, rintf(5.f * UIConfiguration::instance().get_ui_scale())) );
-		editor_meter_peak_display.set_corner_radius (3.0);
+		editor_meter_peak_display.set_size_request (-1, std::max (5.f, std::min (12.f, rintf (8.f * UIConfiguration::instance().get_ui_scale()))) );
+		editor_meter_peak_display.set_corner_radius (1.0);
 
-		editor_meter_max_peak = -INFINITY;
+		_clear_editor_meter = true;
 		editor_meter_peak_display.signal_button_release_event().connect (sigc::mem_fun(*this, &ARDOUR_UI::editor_meter_peak_button_release), false);
 
 		repack_transport_hbox ();
@@ -264,6 +297,16 @@ ARDOUR_UI::unload_session (bool hide_stuff)
 {
 	if (_session) {
 		ARDOUR_UI::instance()->video_timeline->sync_session_state();
+
+		/* Unconditionally save session-specific GUI settings:
+		 * Playhead position, zoom/scroll with stationary PH,
+		 * window and pane positions, etc.
+		 *
+		 * While many GUI operations immediately cause an instant.xml
+		 * save, changing the playhead-pos in particular does not,
+		 * nor mark the session dirty.
+		 */
+		save_ardour_state ();
 	}
 
 	if (_session && _session->dirty()) {
@@ -275,12 +318,15 @@ ARDOUR_UI::unload_session (bool hide_stuff)
 		case -1:
 			// cancel
 			return 1;
-
 		case 1:
+			if (_session->unnamed()) {
+				rename_session (true);
+			}
 			_session->save_state ("");
 			break;
 		}
 	}
+
 
 	{
 		// tear down session specific CPI (owned by rc_config_editor which can remain)
@@ -652,7 +698,7 @@ ARDOUR_UI::tabbable_state_change (Tabbable& t)
 	std::vector<std::string> active_action_names;
 	std::vector<std::string> inactive_action_names;
 	Glib::RefPtr<Action> action;
-	std::string downcased_name = downcase (t.name());
+
 	enum ViewState {
 		Tabbed,
 		Windowed,
@@ -662,31 +708,31 @@ ARDOUR_UI::tabbable_state_change (Tabbable& t)
 
 	if (t.tabbed()) {
 
-		insensitive_action_names.push_back (string_compose ("attach-%1", downcased_name));
-		sensitive_action_names.push_back (string_compose ("show-%1", downcased_name));
-		sensitive_action_names.push_back (string_compose ("detach-%1", downcased_name));
-		sensitive_action_names.push_back (string_compose ("hide-%1", downcased_name));
+		insensitive_action_names.push_back (string_compose ("attach-%1", t.menu_name()));
+		sensitive_action_names.push_back (string_compose ("show-%1", t.menu_name()));
+		sensitive_action_names.push_back (string_compose ("detach-%1", t.menu_name()));
+		sensitive_action_names.push_back (string_compose ("hide-%1", t.menu_name()));
 
 		vs = Tabbed;
 
 	} else if (t.tabbed_by_default ()) {
 
-		insensitive_action_names.push_back (string_compose ("attach-%1", downcased_name));
-		insensitive_action_names.push_back (string_compose ("hide-%1", downcased_name));
-		sensitive_action_names.push_back (string_compose ("show-%1", downcased_name));
-		sensitive_action_names.push_back (string_compose ("detach-%1", downcased_name));
+		insensitive_action_names.push_back (string_compose ("attach-%1", t.menu_name()));
+		insensitive_action_names.push_back (string_compose ("hide-%1", t.menu_name()));
+		sensitive_action_names.push_back (string_compose ("show-%1", t.menu_name()));
+		sensitive_action_names.push_back (string_compose ("detach-%1", t.menu_name()));
 
 		vs = Hidden;
 
 	} else if (t.window_visible()) {
 
-		insensitive_action_names.push_back (string_compose ("detach-%1", downcased_name));
-		sensitive_action_names.push_back (string_compose ("show-%1", downcased_name));
-		sensitive_action_names.push_back (string_compose ("attach-%1", downcased_name));
-		sensitive_action_names.push_back (string_compose ("hide-%1", downcased_name));
+		insensitive_action_names.push_back (string_compose ("detach-%1", t.menu_name()));
+		sensitive_action_names.push_back (string_compose ("show-%1", t.menu_name()));
+		sensitive_action_names.push_back (string_compose ("attach-%1", t.menu_name()));
+		sensitive_action_names.push_back (string_compose ("hide-%1", t.menu_name()));
 
-		active_action_names.push_back (string_compose ("show-%1", downcased_name));
-		inactive_action_names.push_back (string_compose ("hide-%1", downcased_name));
+		active_action_names.push_back (string_compose ("show-%1", t.menu_name()));
+		inactive_action_names.push_back (string_compose ("hide-%1", t.menu_name()));
 
 		vs = Windowed;
 
@@ -696,13 +742,13 @@ ARDOUR_UI::tabbable_state_change (Tabbable& t)
 		 * it visible.
 		 */
 
-		insensitive_action_names.push_back (string_compose ("detach-%1", downcased_name));
-		insensitive_action_names.push_back (string_compose ("hide-%1", downcased_name));
-		sensitive_action_names.push_back (string_compose ("show-%1", downcased_name));
-		sensitive_action_names.push_back (string_compose ("attach-%1", downcased_name));
+		insensitive_action_names.push_back (string_compose ("detach-%1", t.menu_name()));
+		insensitive_action_names.push_back (string_compose ("hide-%1", t.menu_name()));
+		sensitive_action_names.push_back (string_compose ("show-%1", t.menu_name()));
+		sensitive_action_names.push_back (string_compose ("attach-%1", t.menu_name()));
 
-		active_action_names.push_back (string_compose ("hide-%1", downcased_name));
-		inactive_action_names.push_back (string_compose ("show-%1", downcased_name));
+		active_action_names.push_back (string_compose ("hide-%1", t.menu_name()));
+		inactive_action_names.push_back (string_compose ("show-%1", t.menu_name()));
 
 		vs = Hidden;
 	}
@@ -878,6 +924,14 @@ ARDOUR_UI::create_big_transport_window ()
 	return btw;
 }
 
+VirtualKeyboardWindow*
+ARDOUR_UI::create_virtual_keyboard_window ()
+{
+	VirtualKeyboardWindow* vkbd = new VirtualKeyboardWindow ();
+	vkbd->set_session (_session);
+	return vkbd;
+}
+
 void
 ARDOUR_UI::handle_locations_change (Location *)
 {
@@ -903,6 +957,9 @@ ARDOUR_UI::tabbed_window_state_event_handler (GdkEventWindowState* ev, void* obj
 			if (big_transport_window) {
 				big_transport_window->set_transient_for (*editor->own_window());
 			}
+			if (virtual_keyboard_window) {
+				virtual_keyboard_window->set_transient_for (*editor->own_window());
+			}
 		}
 
 	} else if (object == mixer) {
@@ -914,6 +971,9 @@ ARDOUR_UI::tabbed_window_state_event_handler (GdkEventWindowState* ev, void* obj
 			}
 			if (big_transport_window) {
 				big_transport_window->set_transient_for (*mixer->own_window());
+			}
+			if (virtual_keyboard_window) {
+				virtual_keyboard_window->set_transient_for (*mixer->own_window());
 			}
 		}
 	}
@@ -939,4 +999,30 @@ ARDOUR_UI::toggle_mixer_space()
 	} else {
 		mixer->restore_mixer_space ();
 	}
+}
+
+bool
+ARDOUR_UI::timecode_button_press (GdkEventButton* ev)
+{
+	if (ev->button != 1 || ev->type != GDK_2BUTTON_PRESS) {
+		return false;
+	}
+	if (_session) {
+		session_option_editor->show ();
+		session_option_editor->set_current_page (_("Timecode"));
+	}
+	return true;
+}
+
+bool
+ARDOUR_UI::format_button_press (GdkEventButton* ev)
+{
+	if (ev->button != 1 || ev->type != GDK_2BUTTON_PRESS) {
+		return false;
+	}
+	if (_session) {
+		session_option_editor->show ();
+		session_option_editor->set_current_page (_("Media"));
+	}
+	return true;
 }

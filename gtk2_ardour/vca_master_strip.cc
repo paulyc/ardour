@@ -1,20 +1,22 @@
 /*
-    Copyright (C) 2016 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2016-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2016-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2017-2018 Ben Loftis <ben@harrisonconsoles.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <gtkmm/stock.h>
 
@@ -30,6 +32,7 @@
 #include "widgets/tooltips.h"
 
 #include "ardour_dialog.h"
+#include "ardour_message.h"
 #include "floating_text_entry.h"
 #include "gui_thread.h"
 #include "mixer_ui.h"
@@ -78,7 +81,7 @@ VCAMasterStrip::VCAMasterStrip (Session* s, boost::shared_ptr<VCA> v)
 	set_tooltip (mute_button, _("Mute slaves"));
 	mute_button.signal_button_release_event().connect (sigc::mem_fun (*this, &VCAMasterStrip::mute_release), false);
 
-	hide_button.set_icon (ArdourIcon::CloseCross);
+	hide_button.set_icon (ArdourIcon::HideEye);
 	set_tooltip (&hide_button, _("Hide this VCA strip"));
 
 	hide_button.signal_clicked.connect (sigc::mem_fun(*this, &VCAMasterStrip::hide_clicked));
@@ -496,6 +499,32 @@ VCAMasterStrip::remove ()
 	if (!_session) {
 		return;
 	}
+
+	ArdourMessageDialog checker (_("Do you really want to remove this VCA?"),
+	                             true,
+	                             Gtk::MESSAGE_QUESTION,
+	                             Gtk::BUTTONS_NONE);
+
+	string title = string_compose (_("Remove %1"), "VCA");
+	checker.set_title (title);
+
+	checker.set_secondary_text(_("This action cannot be undone."));
+
+	checker.add_button (_("No, do nothing."), RESPONSE_CANCEL);
+	checker.add_button (_("Yes, remove it."), RESPONSE_ACCEPT);
+	checker.set_default_response (RESPONSE_CANCEL);
+
+	checker.set_name (X_("RemoveVcaDialog"));
+	checker.set_wmclass (X_("ardour_vca_remove"), PROGRAM_NAME);
+	checker.set_position (Gtk::WIN_POS_MOUSE);
+
+	switch (checker.run()) {
+	case RESPONSE_ACCEPT:
+		break;
+	default:
+		return;
+	}
+	checker.hide();
 
 	_session->vca_manager().remove_vca (_vca);
 }

@@ -1,23 +1,23 @@
 /*
-    Copyright (C) 2010 Paul Davis
-    Copyright (C) 2010-2014 Robin Gareus <robin@gareus.org>
-    Copyright (C) 2005-2008 Lennart Poettering
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2008 Lennart Poettering
+ * Copyright (C) 2010-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013-2014 Colin Fletcher <colin.m.fletcher@googlemail.com>
+ * Copyright (C) 2014-2015 Paul Davis <paul@linuxaudiosystems.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,6 +47,7 @@
 
 #include "pbd/file_utils.h"
 #include "pbd/search_path.h"
+#include "pbd/pthread_utils.h"
 #include "pbd/system_exec.h"
 
 using namespace std;
@@ -370,6 +371,7 @@ SystemExec::~SystemExec ()
 static void*
 interposer_thread (void *arg) {
 	SystemExec *sex = static_cast<SystemExec *>(arg);
+	pthread_set_name ("ExecStdOut");
 	sex->output_interposer();
 	pthread_exit(0);
 	return 0;
@@ -397,6 +399,15 @@ SystemExec::write_to_stdin (std::string const& d, size_t len)
 	const char *data = d.c_str();
 	if (len == 0) {
 		len = d.length();
+	}
+	return write_to_stdin ((const void*)data, len);
+}
+
+size_t
+SystemExec::write_to_stdin (const char* data, size_t len)
+{
+	if (len == 0) {
+		len = strlen (data);
 	}
 	return write_to_stdin ((const void*)data, len);
 }
@@ -917,10 +928,6 @@ SystemExec::start (StdErrMode stderr_mode, const char *vfork_exec_wrapper)
 #else
 	signal (SIGPIPE, SIG_DFL);
 #endif
-	if (!vfork_exec_wrapper) {
-		error << _("Cannot start external process, no vfork wrapper") << endmsg;
-		return -1;
-	}
 
 	int good_fds[2] = { pok[1],  -1 };
 	close_allv(good_fds);
@@ -962,7 +969,7 @@ SystemExec::start (StdErrMode stderr_mode, const char *vfork_exec_wrapper)
 	char buf = 0;
 	(void) ::write (pok[1], &buf, 1);
 	close_fd (pok[1]);
-	exit (-1);
+	exit (EXIT_FAILURE);
 	return -1;
 }
 

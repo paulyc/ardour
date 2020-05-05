@@ -1,21 +1,26 @@
 /*
-    Copyright (C) 2000-2003 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2000-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2015-2018 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2016 Tim Mayberry <mojofunk@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <iostream>
 #include <cmath>
@@ -75,6 +80,8 @@ namespace ARDOUR {
 		PBD::PropertyDescriptor<float> shift;
 		PBD::PropertyDescriptor<PositionLockStyle> position_lock_style;
 		PBD::PropertyDescriptor<uint64_t> layering_index;
+		PBD::PropertyDescriptor<std::string> tags;
+		PBD::PropertyDescriptor<bool> contents;
 	}
 }
 
@@ -134,7 +141,11 @@ Region::make_property_quarks ()
 	Properties::position_lock_style.property_id = g_quark_from_static_string (X_("positional-lock-style"));
 	DEBUG_TRACE (DEBUG::Properties, string_compose ("quark for position_lock_style = %1\n", Properties::position_lock_style.property_id));
 	Properties::layering_index.property_id = g_quark_from_static_string (X_("layering-index"));
-	DEBUG_TRACE (DEBUG::Properties, string_compose ("quark for layering_index = %1\n", Properties::layering_index.property_id));
+	DEBUG_TRACE (DEBUG::Properties, string_compose ("quark for layering_index = %1\n",	Properties::layering_index.property_id));
+	Properties::tags.property_id = g_quark_from_static_string (X_("tags"));
+	DEBUG_TRACE (DEBUG::Properties, string_compose ("quark for tags = %1\n",	Properties::tags.property_id));
+	Properties::contents.property_id = g_quark_from_static_string (X_("contents"));
+	DEBUG_TRACE (DEBUG::Properties, string_compose ("quark for contents = %1\n",	Properties::contents.property_id));
 }
 
 void
@@ -167,6 +178,8 @@ Region::register_properties ()
 	add_property (_shift);
 	add_property (_position_lock_style);
 	add_property (_layering_index);
+	add_property (_tags);
+	add_property (_contents);
 }
 
 #define REGION_DEFAULT_STATE(s,l) \
@@ -199,7 +212,9 @@ Region::register_properties ()
 	, _stretch (Properties::stretch, 1.0) \
 	, _shift (Properties::shift, 1.0) \
 	, _position_lock_style (Properties::position_lock_style, _type == DataType::AUDIO ? AudioTime : MusicTime) \
-	, _layering_index (Properties::layering_index, 0)
+	, _layering_index (Properties::layering_index, 0) \
+	, _tags (Properties::tags, "") \
+	, _contents (Properties::contents, false)
 
 #define REGION_COPY_STATE(other) \
 	  _sync_marked (Properties::sync_marked, other->_sync_marked) \
@@ -233,7 +248,9 @@ Region::register_properties ()
 	, _stretch (Properties::stretch, other->_stretch) \
 	, _shift (Properties::shift, other->_shift) \
 	, _position_lock_style (Properties::position_lock_style, other->_position_lock_style) \
-	, _layering_index (Properties::layering_index, other->_layering_index)
+	, _layering_index (Properties::layering_index, other->_layering_index) \
+	, _tags (Properties::tags, other->_tags) \
+	, _contents (Properties::contents, other->_contents)
 
 /* derived-from-derived constructor (no sources in constructor) */
 Region::Region (Session& s, samplepos_t start, samplecnt_t length, const string& name, DataType type)
@@ -303,10 +320,10 @@ Region::Region (boost::shared_ptr<const Region> other)
 	/* sync pos is relative to start of file. our start-in-file is now zero,
 	 * so set our sync position to whatever the the difference between
 	 * _start and _sync_pos was in the other region.
-	 * 
+	 *
 	 * result is that our new sync pos points to the same point in our source(s)
 	 * as the sync in the other region did in its source(s).
-	 * 
+	 *
 	 * since we start at zero in our source(s), it is not possible to use a sync point that
 	 * is before the start. reset it to _start if that was true in the other region.
 	 */
@@ -329,7 +346,7 @@ Region::Region (boost::shared_ptr<const Region> other)
 }
 
 /** Create a new Region from part of an existing one.
- * 
+ *
  * the start within \a other is given by \a offset
  * (i.e. relative to the start of \a other's sources, the start is \a offset + \a other.start()
  */
@@ -430,13 +447,13 @@ Region::set_playlist (boost::weak_ptr<Playlist> wpl)
 bool
 Region::set_name (const std::string& str)
 {
-	if (_name != str) {
-		SessionObject::set_name(str); // EMIT SIGNAL NameChanged()
-		assert(_name == str);
-
-		send_change (Properties::name);
+	if (_name == str) {
+		return true;
 	}
 
+	SessionObject::set_name (str); // EMIT SIGNAL NameChanged()
+	assert (_name == str);
+	send_change (Properties::name);
 	return true;
 }
 
@@ -456,7 +473,6 @@ Region::set_selected_for_solo(bool yn)
 
 		_soloSelected = yn;
 	}
-	
 }
 
 void
@@ -568,7 +584,6 @@ Region::special_set_position (samplepos_t pos)
 	 * a way to store its "natural" or "captured" position.
 	 */
 
-	_position = _position;
 	_position = pos;
 }
 
@@ -668,7 +683,7 @@ Region::set_position_internal (samplepos_t pos, bool allow_bbt_recompute, const 
 
 		/* check that the new _position wouldn't make the current
 		 * length impossible - if so, change the length.
-		 * 
+		 *
 		 * XXX is this the right thing to do?
 		 */
 		if (max_samplepos - _length < _position) {
@@ -721,7 +736,7 @@ Region::set_position_music_internal (double qn)
 
 		/* check that the new _position wouldn't make the current
 		 * length impossible - if so, change the length.
-		 * 
+		 *
 		 * XXX is this the right thing to do?
 		 */
 		if (max_samplepos - _length < _position) {
@@ -748,7 +763,7 @@ Region::set_initial_position (samplepos_t pos)
 
 		/* check that the new _position wouldn't make the current
 		 * length impossible - if so, change the length.
-		 * 
+		 *
 		 * XXX is this the right thing to do?
 		 */
 
@@ -1377,6 +1392,22 @@ Region::_set_state (const XMLNode& node, int /*version*/, PropertyChange& what_c
 
 	what_changed = set_values (node);
 
+	/* Regions derived from "Destructive/Tape" mode tracks in earlier
+	 * versions will have their length set to an extremely large value
+	 * (essentially the maximum possible length of a file). Detect this
+	 * here and reset to the actual source length (using the first source
+	 * as a proxy for all of them). For "previously destructive" sources,
+	 * this will correspond to the full extent of the data actually written
+	 * to the file (though this may include blank space if discontiguous
+	 * punches/capture passes were carried out.
+	 */
+
+	if (!_sources.empty() && _type == DataType::AUDIO) {
+		if (_length > _sources.front()->length(_position)) {
+			_length = _sources.front()->length(_position) - _start;
+		}
+	}
+
 	set_id (node);
 
 	if (_position_lock_style == MusicTime) {
@@ -1555,6 +1586,7 @@ Region::set_master_sources (const SourceList& srcs)
 
 	for (SourceList::const_iterator i = _master_sources.begin (); i != _master_sources.end(); ++i) {
 		(*i)->inc_use_count ();
+//		Source::SourcePropertyChanged( *i );
 	}
 }
 
@@ -1714,7 +1746,7 @@ Region::source_length(uint32_t n) const
 bool
 Region::verify_length (samplecnt_t& len)
 {
-	if (source() && (source()->destructive() || source()->length_mutable())) {
+	if (source() && source()->length_mutable()) {
 		return true;
 	}
 
@@ -1732,7 +1764,7 @@ Region::verify_length (samplecnt_t& len)
 bool
 Region::verify_start_and_length (samplepos_t new_start, samplecnt_t& new_length)
 {
-	if (source() && (source()->destructive() || source()->length_mutable())) {
+	if (source() && source()->length_mutable()) {
 		return true;
 	}
 
@@ -1750,7 +1782,7 @@ Region::verify_start_and_length (samplepos_t new_start, samplecnt_t& new_length)
 bool
 Region::verify_start (samplepos_t pos)
 {
-	if (source() && (source()->destructive() || source()->length_mutable())) {
+	if (source() && source()->length_mutable()) {
 		return true;
 	}
 
@@ -1765,7 +1797,7 @@ Region::verify_start (samplepos_t pos)
 bool
 Region::verify_start_mutable (samplepos_t& new_start)
 {
-	if (source() && (source()->destructive() || source()->length_mutable())) {
+	if (source() && source()->length_mutable()) {
 		return true;
 	}
 

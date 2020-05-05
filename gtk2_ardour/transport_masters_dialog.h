@@ -1,21 +1,20 @@
 /*
-    Copyright (C) 2018 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2018-2019 Paul Davis <paul@linuxaudiosystems.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_gtk_transport_masters_dialog_h__
 #define __ardour_gtk_transport_masters_dialog_h__
@@ -30,6 +29,8 @@
 #include <gtkmm/table.h>
 #include <gtkmm/entry.h>
 #include <gtkmm/treestore.h>
+
+#include "widgets/ardour_button.h"
 
 #include "ardour_window.h"
 
@@ -88,13 +89,14 @@ class TransportMastersWidget : public Gtk::VBox, public ARDOUR::SessionHandlePtr
 		Gtk::ComboBoxText port_combo;
 		Gtk::CheckButton sclock_synced_button;
 		Gtk::CheckButton fr2997_button;
-		Gtk::Button request_options;
+		ArdourWidgets::ArdourButton request_options;
 		Gtk::Menu* request_option_menu;
-		Gtk::Button remove_button;
+		ArdourWidgets::ArdourButton remove_button;
 		FloatingTextEntry* name_editor;
 		samplepos_t save_when;
 
 		void build_request_options();
+		void mod_request_type (ARDOUR::TransportRequestType);
 
 		boost::shared_ptr<ARDOUR::TransportMaster> tm;
 
@@ -103,19 +105,8 @@ class TransportMastersWidget : public Gtk::VBox, public ARDOUR::SessionHandlePtr
 		Row (TransportMastersWidget& parent);
 		~Row ();
 
-		struct PortColumns : public Gtk::TreeModel::ColumnRecord {
-			PortColumns() {
-				add (short_name);
-				add (full_name);
-			}
-			Gtk::TreeModelColumn<std::string> short_name;
-			Gtk::TreeModelColumn<std::string> full_name;
-		};
-
-		PortColumns port_columns;
-
 		void populate_port_combo ();
-		Glib::RefPtr<Gtk::ListStore> build_port_list (std::vector<std::string> const & ports);
+		void build_port_list (ARDOUR::DataType);
 
 		void use_button_toggled ();
 		void collect_button_toggled ();
@@ -132,6 +123,8 @@ class TransportMastersWidget : public Gtk::VBox, public ARDOUR::SessionHandlePtr
 
 		PBD::ScopedConnection property_change_connection;
 		bool ignore_active_change;
+
+		bool port_combo_proxy (GdkEventButton*);
 	};
 
 	std::vector<Row*> rows;
@@ -139,16 +132,44 @@ class TransportMastersWidget : public Gtk::VBox, public ARDOUR::SessionHandlePtr
 	Gtk::Table table;
 	Gtk::Label col_title[14];
 	Gtk::Button add_button;
+	Gtk::CheckButton lost_sync_button;
 
 	sigc::connection update_connection;
 	PBD::ScopedConnection current_connection;
 	PBD::ScopedConnection add_connection;
 	PBD::ScopedConnection remove_connection;
+	PBD::ScopedConnection engine_running_connection;
+
+	struct PortColumns : public Gtk::TreeModel::ColumnRecord {
+		PortColumns() {
+			add (short_name);
+			add (full_name);
+		}
+		Gtk::TreeModelColumn<std::string> short_name;
+		Gtk::TreeModelColumn<std::string> full_name;
+	};
+
+	PortColumns port_columns;
+
+	friend class Row;
+	Glib::RefPtr<Gtk::ListStore> midi_port_store;
+	Glib::RefPtr<Gtk::ListStore> audio_port_store;
+
+	PBD::ScopedConnection port_reg_connection;
+	void update_ports ();
+	bool ignore_active_change;
+	void build_port_model (Glib::RefPtr<Gtk::ListStore>, std::vector<std::string> const &);
 
 	void rebuild ();
 	void clear ();
 	void current_changed (boost::shared_ptr<ARDOUR::TransportMaster> old_master, boost::shared_ptr<ARDOUR::TransportMaster> new_master);
 	void add_master ();
+	void update_usability ();
+
+	void lost_sync_changed ();
+	void lost_sync_button_toggled ();
+	void param_changed (std::string const &);
+	PBD::ScopedConnection config_connection;
 
   public:
 	bool idle_remove (Row*);

@@ -1,21 +1,29 @@
 /*
-    Copyright (C) 2000-2007 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2005 Karsten Wiese <fzuuzf@googlemail.com>
+ * Copyright (C) 2005 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2006-2015 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2007-2016 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2014-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2014-2018 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2015 Colin Fletcher <colin.m.fletcher@googlemail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __gtk_ardour_public_editor_h__
 #define __gtk_ardour_public_editor_h__
@@ -39,7 +47,7 @@
 
 #include "temporal/beats.h"
 
-#include "evoral/Note.hpp"
+#include "evoral/Note.h"
 
 #include "ardour/session_handle.h"
 
@@ -75,13 +83,11 @@ class AutomationLine;
 class AutomationTimeAxisView;
 class ControlPoint;
 class DragManager;
-class Editor;
 class ArdourMarker;
 class MeterMarker;
+class MixerStrip;
 class MouseCursors;
 class PlaylistSelector;
-class PluginSelector;
-class PluginUIWindow;
 class RegionView;
 class RouteTimeAxisView;
 class Selection;
@@ -89,9 +95,7 @@ class StripableTimeAxisView;
 class TempoCurve;
 class TempoMarker;
 class TimeAxisView;
-class TimeAxisViewItem;
 class VerboseCursor;
-class XMLNode;
 struct SelectionRect;
 
 class DisplaySuspender;
@@ -183,10 +187,13 @@ public:
 	/** @return Whether the current mouse mode is an "internal" editing mode. */
 	virtual bool internal_editing() const = 0;
 
-	/** Possibly start the audition of a region.  If @param r is 0, or not an AudioRegion
-	 * any current audition is cancelled.  If we are currently auditioning @param r,
-	 * the audition will be cancelled.  Otherwise an audition of @param r will start.
-	 * \param r Region to consider.
+	/** Possibly start the audition of a region.
+	 *
+	 * If \p r is 0, or not an AudioRegion any current audition is cancelled.
+	 * If we are currently auditioning \p r , the audition will be cancelled.
+	 * Otherwise an audition of \p r will start.
+	 *
+	 * @param r Region to consider auditioning
 	 */
 	virtual void consider_auditioning (boost::shared_ptr<ARDOUR::Region> r) = 0;
 
@@ -208,6 +215,7 @@ public:
 	virtual Selection& get_cut_buffer () const = 0;
 
 	virtual void set_selection (std::list<Selectable*>, Selection::Operation) = 0;
+	virtual void set_selected_midi_region_view (MidiRegionView&) = 0;
 
 	virtual bool extend_selection_to_track (TimeAxisView&) = 0;
 	virtual void play_solo_selection(bool restart) = 0;
@@ -279,6 +287,7 @@ public:
 	virtual void new_playlists (TimeAxisView*) = 0;
 	virtual void copy_playlists (TimeAxisView*) = 0;
 	virtual void clear_playlists (TimeAxisView*) = 0;
+	virtual void select_all_visible_lanes () = 0;
 	virtual void select_all_tracks () = 0;
 	virtual void deselect_all () = 0;
 	virtual void invert_selection () = 0;
@@ -316,6 +325,7 @@ public:
 	virtual bool scroll_down_one_track (bool skip_child_views = false) = 0;
 	virtual bool scroll_up_one_track (bool skip_child_views = false) = 0;
 	virtual void select_topmost_track () = 0;
+	virtual void cleanup_regions () = 0;
 	virtual void prepare_for_cleanup () = 0;
 	virtual void finish_cleanup () = 0;
 	virtual void reset_x_origin (samplepos_t sample) = 0;
@@ -364,6 +374,8 @@ public:
 	sigc::signal<void> Realized;
 	sigc::signal<void,samplepos_t> UpdateAllTransportClocks;
 
+	virtual bool pending_locate_request() const = 0;
+
 	static sigc::signal<void> DropDownKeys;
 
 	struct RegionAction {
@@ -379,6 +391,7 @@ public:
 	Glib::RefPtr<Gtk::ActionGroup> editor_actions;
 	Glib::RefPtr<Gtk::ActionGroup> editor_menu_actions;
 	Glib::RefPtr<Gtk::ActionGroup> _region_actions;
+	Glib::RefPtr<Gtk::ActionGroup> _midi_actions;
 
 	virtual bool canvas_scroll_event (GdkEventScroll* event, bool from_canvas) = 0;
 	virtual bool canvas_control_point_event (GdkEvent* event, ArdourCanvas::Item*, ControlPoint*) = 0;
@@ -434,7 +447,11 @@ public:
 	virtual TrackViewList axis_views_from_routes (boost::shared_ptr<ARDOUR::RouteList>) const = 0;
 	virtual TrackViewList const & get_track_views () const = 0;
 
+	virtual MixerStrip* get_current_mixer_strip () const = 0;
+
 	virtual DragManager* drags () const = 0;
+	virtual bool drag_active () const = 0;
+	virtual bool preview_video_drag_active () const = 0;
 	virtual void maybe_autoscroll (bool, bool, bool from_headers) = 0;
 	virtual void stop_canvas_autoscroll () = 0;
 	virtual bool autoscroll_active() const = 0;

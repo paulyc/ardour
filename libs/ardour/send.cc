@@ -1,21 +1,24 @@
 /*
-    Copyright (C) 2000 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2006-2012 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2018 Len Ovens <len@ovenwerks.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <iostream>
 #include <algorithm>
@@ -27,6 +30,7 @@
 #include "ardour/buffer_set.h"
 #include "ardour/debug.h"
 #include "ardour/delayline.h"
+#include "ardour/event_type_map.h"
 #include "ardour/gain_control.h"
 #include "ardour/io.h"
 #include "ardour/meter.h"
@@ -46,7 +50,13 @@ using namespace ARDOUR;
 using namespace PBD;
 using namespace std;
 
-PBD::Signal0<void> Send::ChangedLatency;
+PBD::Signal0<void> LatentSend::ChangedLatency;
+
+LatentSend::LatentSend ()
+		: _delay_in (0)
+		, _delay_out (0)
+{
+}
 
 string
 Send::name_and_id_new_send (Session& s, Role r, uint32_t& bitslot, bool ignore_bitslot)
@@ -62,13 +72,14 @@ Send::name_and_id_new_send (Session& s, Role r, uint32_t& bitslot, bool ignore_b
 
 	switch (r) {
 	case Delivery::Aux:
-		return string_compose (_("aux %1"), (bitslot = s.next_aux_send_id ()) + 1);
+		return string_compose (_("aux %1"), (bitslot = s.next_aux_send_id ()));
 	case Delivery::Listen:
+		bitslot = 0; /* unused */
 		return _("listen"); // no ports, no need for numbering
 	case Delivery::Send:
-		return string_compose (_("send %1"), (bitslot = s.next_send_id ()) + 1);
+		return string_compose (_("send %1"), (bitslot = s.next_send_id ()));
 	case Delivery::Foldback:
-		return string_compose (_("foldback %1"), (bitslot = s.next_aux_send_id ()) + 1);
+		return string_compose (_("foldback %1"), (bitslot = s.next_aux_send_id ()));
 	default:
 		fatal << string_compose (_("programming error: send created using role %1"), enum_2_string (r)) << endmsg;
 		abort(); /*NOTREACHED*/
@@ -80,21 +91,13 @@ Send::name_and_id_new_send (Session& s, Role r, uint32_t& bitslot, bool ignore_b
 Send::Send (Session& s, boost::shared_ptr<Pannable> p, boost::shared_ptr<MuteMaster> mm, Role r, bool ignore_bitslot)
 	: Delivery (s, p, mm, name_and_id_new_send (s, r, _bitslot, ignore_bitslot), r)
 	, _metering (false)
-	, _delay_in (0)
-	, _delay_out (0)
 	, _remove_on_disconnect (false)
 {
-	if (_role == Listen) {
-		/* we don't need to do this but it keeps things looking clean
-		   in a debugger. _bitslot is not used by listen sends.
-		*/
-		_bitslot = 0;
-	}
-
 	//boost_debug_shared_ptr_mark_interesting (this, "send");
 
-	boost::shared_ptr<AutomationList> gl (new AutomationList (Evoral::Parameter (GainAutomation)));
-	_gain_control = boost::shared_ptr<GainControl> (new GainControl (_session, Evoral::Parameter(GainAutomation), gl));
+	boost::shared_ptr<AutomationList> gl (new AutomationList (Evoral::Parameter (BusSendLevel)));
+	_gain_control = boost::shared_ptr<GainControl> (new GainControl (_session, Evoral::Parameter(BusSendLevel), gl));
+	_gain_control->set_flag (Controllable::InlineControl);
 	add_control (_gain_control);
 
 	_amp.reset (new Amp (_session, _("Fader"), _gain_control, true));
@@ -105,6 +108,7 @@ Send::Send (Session& s, boost::shared_ptr<Pannable> p, boost::shared_ptr<MuteMas
 
 	if (panner_shell()) {
 		panner_shell()->Changed.connect_same_thread (*this, boost::bind (&Send::panshell_changed, this));
+		panner_shell()->PannableChanged.connect_same_thread (*this, boost::bind (&Send::pannable_changed, this));
 	}
 	if (_output) {
 		_output->changed.connect_same_thread (*this, boost::bind (&Send::snd_output_changed, this, _1, _2));
@@ -187,7 +191,7 @@ Send::set_delay_in (samplecnt_t delay)
 	}
 	_delay_in = delay;
 
-	DEBUG_TRACE (DEBUG::LatencyCompensation,
+	DEBUG_TRACE (DEBUG::LatencyDelayLine,
 			string_compose ("Send::set_delay_in %1: (%2) - %3 = %4\n",
 				name (), _delay_in, _delay_out, _delay_in - _delay_out));
 
@@ -195,13 +199,13 @@ Send::set_delay_in (samplecnt_t delay)
 }
 
 void
-Send::set_delay_out (samplecnt_t delay)
+Send::set_delay_out (samplecnt_t delay, size_t /*bus*/)
 {
 	if (_delay_out == delay) {
 		return;
 	}
 	_delay_out = delay;
-	DEBUG_TRACE (DEBUG::LatencyCompensation,
+	DEBUG_TRACE (DEBUG::LatencyDelayLine,
 			string_compose ("Send::set_delay_out %1: %2 - (%3) = %4\n",
 				name (), _delay_in, _delay_out, _delay_in - _delay_out));
 
@@ -271,7 +275,7 @@ Send::state ()
 
 	node.set_property ("selfdestruct", _remove_on_disconnect);
 
-	node.add_child_nocopy (_amp->get_state ());
+	node.add_child_nocopy (_gain_control->get_state());
 
 	return node;
 }
@@ -283,11 +287,80 @@ Send::set_state (const XMLNode& node, int version)
 		return set_state_2X (node, version);
 	}
 
-	XMLProperty const * prop;
+	XMLNode* gain_node;
+	if ((gain_node = node.child (Controllable::xml_node_name.c_str ())) != 0) {
+		_gain_control->set_state (*gain_node, version);
+#if 1 // remove after Ardour 6.0 / Mixbus 6.1
+		/* fix old sessions (6.0-pre0-3039-g93180ceea9 .. 6.0-pre0-3459-g587fc50059)
+		 * this is mainly relevant for Mixbus6.0, copy/paste aux-sends.
+		 * -> remove me after 6.1
+		 */
+		_gain_control->set_flag (Controllable::InlineControl);
+#endif
+	}
+
+	if (version <= 6000) {
+		XMLNode const* nn = &node;
+
+#ifdef MIXBUS
+		/* This was also broken in mixbus 6.0 */
+		if (version <= 6000)
+#else
+		/* version 5: Gain Control was owned by the Amp */
+		if (version < 6000)
+#endif
+		{
+			XMLNode* processor = node.child ("Processor");
+			if (processor) {
+				nn = processor;
+				if ((gain_node = nn->child (Controllable::xml_node_name.c_str ())) != 0) {
+					_gain_control->set_state (*gain_node, version);
+					_gain_control->set_flags (Controllable::InlineControl);
+				}
+			}
+		}
+
+		/* convert GainAutomation to BusSendLevel
+		 *
+		 * (early Ardour 6.0-pre0 and Mixbus 6.0 used "BusSendLevel"
+		 *  control with GainAutomation, so we check version <= 6000.
+		 *  New A6 sessions do not have a GainAutomation parameter,
+		 *  so this is safe.)
+		 *
+		 * Normally this is restored via
+		 * Delivery::set_state() -> Processor::set_state()
+		 * -> Automatable::set_automation_xml_state()
+		 */
+		XMLNodeList nlist;
+		XMLNode* automation = nn->child ("Automation");
+		if (automation) {
+			nlist = automation->children();
+		} else if (0 != (automation = node.child ("Automation"))) {
+			nlist = automation->children();
+		}
+		for (XMLNodeIterator i = nlist.begin(); i != nlist.end(); ++i) {
+			if ((*i)->name() != "AutomationList") {
+				continue;
+			}
+			XMLProperty const* id_prop = (*i)->property("automation-id");
+			if (!id_prop) {
+				continue;
+			}
+			Evoral::Parameter param = EventTypeMap::instance().from_symbol (id_prop->value());
+			if (param.type() != GainAutomation) {
+				continue;
+			}
+			XMLNode xn (**i);
+			xn.set_property ("automation-id", EventTypeMap::instance().to_symbol(Evoral::Parameter (BusSendLevel)));
+			_gain_control->alist()->set_state (xn, version);
+			break;
+		}
+	}
 
 	Delivery::set_state (node, version);
 
 	if (node.property ("ignore-bitslot") == 0) {
+		XMLProperty const* prop;
 
 		/* don't try to reset bitslot if there is a node for it already: this can cause
 		   issues with the session's accounting of send ID's
@@ -319,13 +392,6 @@ Send::set_state (const XMLNode& node, int version)
 	}
 
 	node.get_property (X_("selfdestruct"), _remove_on_disconnect);
-
-	XMLNodeList nlist = node.children();
-	for (XMLNodeIterator i = nlist.begin(); i != nlist.end(); ++i) {
-		if ((*i)->name() == X_("Processor")) {
-			_amp->set_state (**i, version);
-		}
-	}
 
 	_send_delay->set_name ("Send-" + name());
 	_thru_delay->set_name ("Thru-" + name());
@@ -366,6 +432,29 @@ Send::set_state_2X (const XMLNode& node, int /* version */)
 	set_name (prop->value ());
 
 	return 0;
+}
+
+bool
+Send::has_panner () const
+{
+	/* see InternalSend::run() and Delivery::run */
+	if (_panshell && role () != Listen && _panshell->panner()) {
+		return true; // !_panshell->bypassed ()
+	}
+	return false;
+}
+
+bool
+Send::panner_linked_to_route () const
+{
+	return _panshell ? _panshell->is_linked_to_route() : false;
+}
+
+void
+Send::set_panner_linked_to_route (bool onoff) {
+	if (_panshell) {
+		_panshell->set_linked_to_route (onoff);
+	}
 }
 
 bool
@@ -414,28 +503,23 @@ Send::panshell_changed ()
 	_meter->configure_io (ChanCount (DataType::AUDIO, pan_outs()), ChanCount (DataType::AUDIO, pan_outs()));
 }
 
+void
+Send::pannable_changed ()
+{
+	PropertyChanged (PBD::PropertyChange ()); /* EMIT SIGNAL */
+}
+
 bool
 Send::set_name (const string& new_name)
 {
 	string unique_name;
 
 	if (_role == Delivery::Send) {
-		char buf[32];
+		unique_name = validate_name (new_name, string_compose (_("send %1"), _bitslot));
 
-		/* rip any existing numeric part of the name, and append the bitslot
-		 */
-
-		string::size_type last_letter = new_name.find_last_not_of ("0123456789");
-
-		if (last_letter != string::npos) {
-			unique_name = new_name.substr (0, last_letter + 1);
-		} else {
-			unique_name = new_name;
+		if (unique_name.empty ()) {
+			return false;
 		}
-
-		snprintf (buf, sizeof (buf), "%u", (_bitslot + 1));
-		unique_name += buf;
-
 	} else {
 		unique_name = new_name;
 	}

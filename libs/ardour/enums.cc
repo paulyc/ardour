@@ -1,26 +1,35 @@
 /*
-    Copyright (C) 2000-2007 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2000-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2007-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2008 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2010-2012 Sakari Bergen <sakari.bergen@beatwaves.net>
+ * Copyright (C) 2012-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013-2016 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2013-2018 Colin Fletcher <colin.m.fletcher@googlemail.com>
+ * Copyright (C) 2014-2019 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2015-2018 Len Ovens <len@ovenwerks.net>
+ * Copyright (C) 2015 Tim Mayberry <mojofunk@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include "pbd/enumwriter.h"
 #include "midi++/types.h"
 
-#include "evoral/Range.hpp" // shouldn't Evoral have its own enum registration?
+#include "evoral/Range.h" // shouldn't Evoral have its own enum registration?
 
 #include "ardour/delivery.h"
 #include "ardour/disk_io.h"
@@ -38,6 +47,7 @@
 #include "ardour/source.h"
 #include "ardour/tempo.h"
 #include "ardour/track.h"
+#include "ardour/transport_fsm.h"
 #include "ardour/transport_master.h"
 #include "ardour/types.h"
 
@@ -133,6 +143,7 @@ setup_enum_writer ()
 	RegionEquivalence _RegionEquivalence;
 	WaveformScale _WaveformScale;
 	WaveformShape _WaveformShape;
+	ScreenSaverMode _ScreenSaverMode;
 	Session::PostTransportWork _Session_PostTransportWork;
 	MTC_Status _MIDI_MTC_Status;
 	Evoral::OverlapType _OverlapType;
@@ -141,6 +152,13 @@ setup_enum_writer ()
 	PresentationInfo::Flag _PresentationInfo_Flag;
 	MusicalMode::Type mode;
 	MidiPortFlags _MidiPortFlags;
+	TransportFSM::EventType _TransportFSM_EventType;
+	TransportFSM::MotionState _TransportFSM_MotionState;
+	TransportFSM::ButlerState _TransportFSM_ButlerState;
+	TransportFSM::DirectionState _TransportFSM_DirectionState;
+	LoopFadeChoice _LoopFadeChooice;
+	TransportState _TransportState;
+	LocateTransportDisposition _LocateTransportDisposition;
 
 #define REGISTER(e) enum_writer.register_distinct (typeid(e).name(), i, s); i.clear(); s.clear()
 #define REGISTER_BITS(e) enum_writer.register_bits (typeid(e).name(), i, s); i.clear(); s.clear()
@@ -230,6 +248,9 @@ setup_enum_writer ()
 
 	REGISTER_ENUM (Normal);
 	REGISTER_ENUM (NonLayered);
+	/* No longer used but we leave this here so that enumwriter can parse
+	 * strings containing "Destructive"
+	 */
 	REGISTER_ENUM (Destructive);
 	REGISTER (_TrackMode);
 
@@ -400,8 +421,7 @@ setup_enum_writer ()
 	REGISTER_ENUM (LTC);
 	REGISTER (_SyncSource);
 
-	REGISTER_ENUM (TR_Stop);
-	REGISTER_ENUM (TR_Start);
+	REGISTER_ENUM (TR_StartStop);
 	REGISTER_ENUM (TR_Speed);
 	REGISTER_ENUM (TR_Locate);
 	REGISTER (_TransportRequestType);
@@ -438,7 +458,6 @@ setup_enum_writer ()
 	REGISTER_CLASS_ENUM (SessionEvent, SetTimecodeTransmission);
 	REGISTER_CLASS_ENUM (SessionEvent, Skip);
 	REGISTER_CLASS_ENUM (SessionEvent, SetTransportMaster);
-	REGISTER_CLASS_ENUM (SessionEvent, StopOnce);
 	REGISTER_CLASS_ENUM (SessionEvent, AutoLoop);
 	REGISTER (_SessionEvent_Type);
 
@@ -454,7 +473,6 @@ setup_enum_writer ()
 	REGISTER (_MIDI_MTC_Status);
 
 	REGISTER_CLASS_ENUM (Session, PostTransportStop);
-	REGISTER_CLASS_ENUM (Session, PostTransportDuration);
 	REGISTER_CLASS_ENUM (Session, PostTransportLocate);
 	REGISTER_CLASS_ENUM (Session, PostTransportRoll);
 	REGISTER_CLASS_ENUM (Session, PostTransportAbort);
@@ -462,6 +480,8 @@ setup_enum_writer ()
 	REGISTER_CLASS_ENUM (Session, PostTransportAudition);
 	REGISTER_CLASS_ENUM (Session, PostTransportReverse);
 	REGISTER_CLASS_ENUM (Session, PostTransportClearSubstate);
+	REGISTER_CLASS_ENUM (Session, PostTransportAdjustPlaybackBuffering);
+	REGISTER_CLASS_ENUM (Session, PostTransportAdjustCaptureBuffering);
 	REGISTER_BITS (_Session_PostTransportWork);
 
 	REGISTER_CLASS_ENUM (Session, Clean);
@@ -503,6 +523,9 @@ setup_enum_writer ()
 	REGISTER_CLASS_ENUM (Source, RemovableIfEmpty);
 	REGISTER_CLASS_ENUM (Source, RemoveAtDestroy);
 	REGISTER_CLASS_ENUM (Source, NoPeakFile);
+	/* No longer used but we leave this here so that enumwriter can parse
+	 * strings containing "Destructive"
+	 */
 	REGISTER_CLASS_ENUM (Source, Destructive);
 	REGISTER_CLASS_ENUM (Source, Empty);
 	REGISTER_BITS (_Source_Flag);
@@ -527,7 +550,6 @@ setup_enum_writer ()
 
 	REGISTER_CLASS_ENUM (DiskIOProcessor, Recordable);
 	REGISTER_CLASS_ENUM (DiskIOProcessor, Hidden);
-	REGISTER_CLASS_ENUM (DiskIOProcessor, Destructive);
 	REGISTER_BITS (_DiskIOProcessor_Flag);
 
 	REGISTER_CLASS_ENUM (Location, IsMark);
@@ -650,7 +672,6 @@ setup_enum_writer ()
 	REGISTER_CLASS_ENUM (RegionExportChannelFactory, None);
 	REGISTER_CLASS_ENUM (RegionExportChannelFactory, Raw);
 	REGISTER_CLASS_ENUM (RegionExportChannelFactory, Fades);
-	REGISTER_CLASS_ENUM (RegionExportChannelFactory, Processed);
 	REGISTER (_RegionExportChannelFactory_Type);
 
 	REGISTER_CLASS_ENUM (Delivery, Insert);
@@ -704,6 +725,11 @@ setup_enum_writer ()
 	REGISTER_ENUM(Traditional);
 	REGISTER_ENUM(Rectified);
 	REGISTER(_WaveformShape);
+
+	REGISTER_ENUM(InhibitNever);
+	REGISTER_ENUM(InhibitWhileRecording);
+	REGISTER_ENUM(InhibitAlways);
+	REGISTER(_ScreenSaverMode);
 
 	REGISTER_ENUM(AudioTime);
 	REGISTER_ENUM(MusicTime);
@@ -779,6 +805,49 @@ setup_enum_writer ()
 	REGISTER_CLASS_ENUM (MusicalMode, Persian);
 	REGISTER_CLASS_ENUM (MusicalMode, Algerian);
 	REGISTER (mode);
+
+	REGISTER_CLASS_ENUM (TransportFSM, ButlerDone);
+	REGISTER_CLASS_ENUM (TransportFSM, ButlerRequired);
+	REGISTER_CLASS_ENUM (TransportFSM, DeclickDone);
+	REGISTER_CLASS_ENUM (TransportFSM, StartTransport);
+	REGISTER_CLASS_ENUM (TransportFSM, StopTransport);
+	REGISTER_CLASS_ENUM (TransportFSM, Locate);
+	REGISTER_CLASS_ENUM (TransportFSM, LocateDone);
+	REGISTER_CLASS_ENUM (TransportFSM, SetSpeed);
+	REGISTER (_TransportFSM_EventType);
+
+	REGISTER_CLASS_ENUM (TransportFSM, Stopped);
+	REGISTER_CLASS_ENUM (TransportFSM, Rolling);
+	REGISTER_CLASS_ENUM (TransportFSM, DeclickToStop);
+	REGISTER_CLASS_ENUM (TransportFSM, DeclickToLocate);
+	REGISTER_CLASS_ENUM (TransportFSM, WaitingForLocate);
+	REGISTER (_TransportFSM_MotionState);
+
+	REGISTER_CLASS_ENUM (TransportFSM, NotWaitingForButler);
+	REGISTER_CLASS_ENUM (TransportFSM, WaitingForButler);
+	REGISTER (_TransportFSM_ButlerState);
+
+	REGISTER_CLASS_ENUM (TransportFSM, Forwards);
+	REGISTER_CLASS_ENUM (TransportFSM, Backwards);
+	REGISTER_CLASS_ENUM (TransportFSM, Reversing);
+	REGISTER (_TransportFSM_DirectionState);
+
+	REGISTER_ENUM (NoLoopFade);
+	REGISTER_ENUM (EndLoopFade);
+	REGISTER_ENUM (BothLoopFade);
+	REGISTER_ENUM (XFadeLoop);
+	REGISTER (_LoopFadeChooice);
+
+	REGISTER_ENUM (TransportStopped);
+	REGISTER_ENUM (TransportRolling);
+	REGISTER_ENUM (TransportLooping);
+	REGISTER_ENUM (TransportStarting);
+	REGISTER (_TransportState);
+
+	REGISTER_ENUM (MustStop);
+	REGISTER_ENUM (MustRoll);
+	REGISTER_ENUM (RollIfAppropriate);
+	REGISTER (_LocateTransportDisposition);
 }
 
 } /* namespace ARDOUR */

@@ -1,20 +1,20 @@
 /*
-    Copyright (C) 2002 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
+ * Copyright (C) 2018-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2018 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 #include <vector>
@@ -74,6 +74,7 @@ TransportMaster::TransportMaster (SyncSource t, std::string const & name)
 	, _sclock_synced (Properties::sclock_synced, false)
 	, _collect (Properties::collect, true)
 	, _connected (Properties::connected, false)
+	, port_node (X_(""))
 {
 	register_properties ();
 
@@ -132,7 +133,7 @@ TransportMaster::speed_and_position (double& speed, samplepos_t& pos, samplepos_
 
 	pos = last.position + (now - last.timestamp) * speed;
 
-	DEBUG_TRACE (DEBUG::Slave, string_compose ("%1 sync spd: %2 pos: %3 | last-pos: %4 @  %7| elapsed: %5 | speed: %6\n",
+	DEBUG_TRACE (DEBUG::Slave, string_compose ("%1 sync spd: %2 pos: %3 | last-pos: %4 @  %7 | elapsed: %5 | speed: %6\n",
 	                                           name(), speed, pos, last.position, (now - last.timestamp), speed, when));
 
 	return true;
@@ -260,7 +261,27 @@ TransportMaster::set_state (XMLNode const & node, int /* version */)
 	XMLNode* pnode = node.child (X_("Port"));
 
 	if (pnode) {
-		XMLNodeList const & children = pnode->children();
+		port_node = *pnode;
+
+		if (AudioEngine::instance()->running()) {
+			connect_port_using_state ();
+		}
+	}
+
+	PropertyChanged (what_changed);
+
+	return 0;
+}
+
+void
+TransportMaster::connect_port_using_state ()
+{
+	if (!_port) {
+		create_port ();
+	}
+
+	if (_port) {
+		XMLNodeList const & children = port_node.children();
 		for (XMLNodeList::const_iterator ci = children.begin(); ci != children.end(); ++ci) {
 
 			XMLProperty const *prop;
@@ -273,10 +294,6 @@ TransportMaster::set_state (XMLNode const & node, int /* version */)
 			}
 		}
 	}
-
-	PropertyChanged (what_changed);
-
-	return 0;
 }
 
 XMLNode&
@@ -360,24 +377,33 @@ TransportMaster::factory (SyncSource type, std::string const& name, bool removea
 
 	DEBUG_TRACE (DEBUG::Slave, string_compose ("factory-construct %1 name %2 removeable %3\n", enum_2_string (type), name, removeable));
 
-	switch (type) {
-	case MTC:
-		tm.reset (new MTC_TransportMaster (name));
-		break;
-	case LTC:
-		tm.reset (new LTC_TransportMaster (name));
-		break;
-	case MIDIClock:
-		tm.reset (new MIDIClock_TransportMaster (name));
-		break;
-	case Engine:
-		tm.reset (new Engine_TransportMaster (*AudioEngine::instance()));
-		break;
-	default:
-		break;
+	try {
+		switch (type) {
+		case MTC:
+			tm.reset (new MTC_TransportMaster (name));
+			break;
+		case LTC:
+			tm.reset (new LTC_TransportMaster (name));
+			break;
+		case MIDIClock:
+			tm.reset (new MIDIClock_TransportMaster (name));
+			break;
+		case Engine:
+			tm.reset (new Engine_TransportMaster (*AudioEngine::instance()));
+			break;
+		default:
+			break;
+		}
+	} catch (...) {
+		error << string_compose (_("Construction of transport master object of type %1 failed"), enum_2_string (type)) << endmsg;
+		std::cerr << string_compose (_("Construction of transport master object of type %1 failed"), enum_2_string (type)) << std::endl;
+		return boost::shared_ptr<TransportMaster>();
 	}
 
 	if (tm) {
+		if (AudioEngine::instance()->running()) {
+			tm->create_port ();
+		}
 		tm->set_removeable (removeable);
 	}
 
@@ -444,7 +470,7 @@ TransportMasterViaMIDI::create_midi_port (std::string const & port_name)
 {
 	boost::shared_ptr<Port> p;
 
-	if ((p = AudioEngine::instance()->register_input_port (DataType::MIDI, port_name)) == 0) {
+	if ((p = AudioEngine::instance()->register_input_port (DataType::MIDI, port_name, false, TransportMasterPort)) == 0) {
 		return boost::shared_ptr<Port> ();
 	}
 
@@ -457,6 +483,27 @@ bool
 TransportMaster::allow_request (TransportRequestSource src, TransportRequestType type) const
 {
 	return _request_mask & type;
+}
+
+std::string
+TransportMaster::allowed_request_string () const
+{
+	std::string s;
+	if (_request_mask == TransportRequestType (TR_StartStop|TR_Speed|TR_Locate)) {
+		s = _("All");
+	} else if (_request_mask == TransportRequestType (0)) {
+		s = _("None");
+	} else if (_request_mask == TR_StartStop) {
+		s = _("Start/Stop");
+	} else if (_request_mask == TR_Speed) {
+		s = _("Speed");
+	} else if (_request_mask == TR_Locate) {
+		s = _("Locate");
+	} else {
+		s = _("Complex");
+	}
+
+	return s;
 }
 
 void
@@ -490,4 +537,3 @@ TimecodeTransportMaster::set_fr2997 (bool yn)
 		PropertyChanged (Properties::fr2997);
 	}
 }
-

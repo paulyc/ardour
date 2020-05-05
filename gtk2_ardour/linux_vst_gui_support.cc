@@ -1,22 +1,21 @@
 /*
-    Copyright (C) 2012 Paul Davis
-    Based on code by Paul Davis, Torben Hohn as part of FST
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2013-2015 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 /******************************************************************/
 /** VSTFX - An engine based on FST for handling linuxVST plugins **/
@@ -31,6 +30,8 @@
 #include <signal.h>
 #include <glib.h>
 #include <glibmm/timer.h>
+
+#include "pbd/pthread_utils.h"
 
 #include "ardour/linux_vst_support.h"
 #include "ardour/vst_plugin.h"
@@ -317,8 +318,10 @@ dispatch_x_events (XEvent* event, VSTState* vstfx)
 any Xevents to all the UI callbacks plugins 'may' have registered on their
 windows, that is if they don't manage their own UIs **/
 
-void* gui_event_loop (void* ptr)
+static void*
+gui_event_loop (void* ptr)
 {
+	pthread_set_name ("LXVSTEventLoop");
 	VSTState* vstfx;
 	int LXVST_sched_timer_interval = 40; //ms, 25fps
 	XEvent event;
@@ -623,6 +626,11 @@ int vstfx_create_editor (VSTState* vstfx)
 
 	int x_size = 1;
 	int y_size = 1;
+
+	if (!LXVST_XDisplay) {
+		vstfx_error ("** ERROR ** VSTFX: No X11 Display available for plugin UI");
+		return -1;
+	}
 
 	/* Note: vstfx->lock is held while this function is called */
 

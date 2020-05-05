@@ -1,21 +1,24 @@
 /*
-  Copyright (C) 2000 Paul Davis
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2000-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2016 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2012 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2014-2018 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifdef WAF_BUILD
 #include "libardour-config.h"
@@ -44,13 +47,14 @@
 #include "pbd/basename.h"
 #include "pbd/convert.h"
 
-#include "evoral/SMF.hpp"
+#include "evoral/SMF.h"
 
 #include "ardour/analyser.h"
 #include "ardour/ardour.h"
 #include "ardour/audioengine.h"
 #include "ardour/audioregion.h"
 #include "ardour/import_status.h"
+#include "ardour/mp3fileimportable.h"
 #include "ardour/region_factory.h"
 #include "ardour/resampled_source.h"
 #include "ardour/runtime_functions.h"
@@ -77,9 +81,9 @@ static boost::shared_ptr<ImportableSource>
 open_importable_source (const string& path, samplecnt_t samplerate, ARDOUR::SrcQuality quality)
 {
 	/* try libsndfile first, because it can get BWF info from .wav, which ExtAudioFile cannot.
-	   We don't necessarily need that information in an ImportableSource, but it keeps the
-	   logic the same as in SourceFactory::create()
-	*/
+	 * We don't necessarily need that information in an ImportableSource, but it keeps the
+	 * logic the same as in SourceFactory::create()
+	 */
 
 	try {
 		boost::shared_ptr<SndFileImportableSource> source(new SndFileImportableSource(path));
@@ -89,16 +93,12 @@ open_importable_source (const string& path, samplecnt_t samplerate, ARDOUR::SrcQ
 		}
 
 		/* rewrap as a resampled source */
-
 		return boost::shared_ptr<ImportableSource>(new ResampledImportableSource(source, samplerate, quality));
-	}
+	} catch (...) { }
 
-	catch (...) {
-
+	/* libsndfile failed, see if we can use CoreAudio to handle the IO */
 #ifdef HAVE_COREAUDIO
-
-		/* libsndfile failed, see if we can use CoreAudio to handle the IO */
-
+	try {
 		CAImportableSource* src = new CAImportableSource(path);
 		boost::shared_ptr<CAImportableSource> source (src);
 
@@ -107,14 +107,23 @@ open_importable_source (const string& path, samplecnt_t samplerate, ARDOUR::SrcQ
 		}
 
 		/* rewrap as a resampled source */
-
 		return boost::shared_ptr<ImportableSource>(new ResampledImportableSource(source, samplerate, quality));
-
-#else
-		throw; // rethrow
+	} catch (...) { }
 #endif
 
-	}
+	/* libsndfile and CoreAudioFile failed, try minimp3-decoder */
+	try {
+		boost::shared_ptr<Mp3FileImportableSource> source(new Mp3FileImportableSource(path));
+
+		if (source->samplerate() == samplerate) {
+			return source;
+		}
+
+		/* rewrap as a resampled source */
+		return boost::shared_ptr<ImportableSource>(new ResampledImportableSource(source, samplerate, quality));
+	} catch (...) { }
+
+	throw failed_constructor ();
 }
 
 vector<string>
@@ -146,7 +155,7 @@ Session::get_paths_for_new_sources (bool /*allow_replacing*/, const string& impo
 			}
 			break;
 		case DataType::AUDIO:
-			filepath = new_audio_source_path (basename, channels, n, false, false);
+			filepath = new_audio_source_path (basename, channels, n, false);
 			break;
 		}
 
@@ -184,7 +193,7 @@ static bool
 create_mono_sources_for_writing (const vector<string>& new_paths,
                                  Session& sess, uint32_t samplerate,
                                  vector<boost::shared_ptr<Source> >& newfiles,
-                                 samplepos_t timeline_position)
+                                 samplepos_t natural_position)
 {
 	for (vector<string>::const_iterator i = new_paths.begin(); i != new_paths.end(); ++i) {
 
@@ -193,10 +202,7 @@ create_mono_sources_for_writing (const vector<string>& new_paths,
 		try {
 			const DataType type = SMFSource::safe_midi_file_extension (*i) ? DataType::MIDI : DataType::AUDIO;
 
-			source = SourceFactory::createWritable (type, sess,
-			                                        i->c_str(),
-			                                        false, // destructive
-			                                        samplerate);
+			source = SourceFactory::createWritable (type, sess, i->c_str(), samplerate);
 		}
 
 		catch (const failed_constructor& err) {
@@ -212,7 +218,7 @@ create_mono_sources_for_writing (const vector<string>& new_paths,
 
 		boost::shared_ptr<AudioFileSource> afs;
 		if ((afs = boost::dynamic_pointer_cast<AudioFileSource>(source)) != 0) {
-			afs->set_timeline_position(timeline_position);
+			afs->set_natural_position (natural_position);
 		}
 	}
 	return true;
@@ -497,10 +503,8 @@ Session::import_files (ImportStatus& status)
 
 	status.sources.clear ();
 
-	for (vector<string>::const_iterator p = status.paths.begin();
-	     p != status.paths.end() && !status.cancel;
-	     ++p)
-	{
+	for (vector<string>::const_iterator p = status.paths.begin(); p != status.paths.end() && !status.cancel; ++p) {
+
 		boost::shared_ptr<ImportableSource> source;
 
 		const DataType type = SMFSource::safe_midi_file_extension (*p) ? DataType::MIDI : DataType::AUDIO;

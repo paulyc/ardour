@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2014-2018 Robin Gareus <robin@gareus.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -11,9 +11,9 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 #include <unistd.h>
@@ -64,6 +64,7 @@ AlsaMidiIO::~AlsaMidiIO ()
 static void * pthread_process (void *arg)
 {
 	AlsaMidiIO *d = static_cast<AlsaMidiIO *>(arg);
+	pthread_set_name ("AlsaMidiIO");
 	d->main_process_thread ();
 	pthread_exit (0);
 	return 0;
@@ -72,7 +73,7 @@ static void * pthread_process (void *arg)
 int
 AlsaMidiIO::start ()
 {
-	if (pbd_realtime_pthread_create (PBD_SCHED_FIFO, -21, 100000,
+	if (pbd_realtime_pthread_create (PBD_SCHED_FIFO, PBD_RT_PRI_MIDI, PBD_RT_STACKSIZE_HELP,
 				&_main_thread, pthread_process, this))
 	{
 		if (pthread_create (&_main_thread, NULL, pthread_process, this)) {

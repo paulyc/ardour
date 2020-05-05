@@ -1,21 +1,25 @@
 /*
-  Copyright (C) 2012 Paul Davis
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2010-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2011-2012 David Robillard <d@drobilla.net>
+ * Copyright (C) 2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2014-2015 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2014-2018 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <gdkmm/pixbuf.h>
 
@@ -205,6 +209,8 @@ MonitorSection::MonitorSection ()
 	set_tooltip (*solo_boost_control, _("Gain increase for soloed signals (0dB is normal)"));
 
 	solo_boost_display = new ArdourDisplay ();
+	set_tooltip (*solo_boost_display, _("Gain increase for soloed signals (0dB is normal)"));
+	solo_boost_display->set_name("monitor section button");
 	solo_boost_display->set_size_request (PX_SCALE(68), PX_SCALE(20));
 	solo_boost_display->add_controllable_preset(_("0 dB"), 0.0);
 	solo_boost_display->add_controllable_preset(_("3 dB"), 3.0);
@@ -221,7 +227,8 @@ MonitorSection::MonitorSection ()
 	set_tooltip (*solo_cut_control, _("Gain reduction non-soloed signals\nA value above -inf dB causes \"solo-in-front\""));
 
 	solo_cut_display = new ArdourDisplay ();
-	solo_cut_display->set_name("monitor section dropdown"); // XXX
+	set_tooltip (*solo_cut_display, _("Gain reduction non-soloed signals\nA value above -inf dB causes \"solo-in-front\""));
+	solo_cut_display->set_name("monitor section button");
 	solo_cut_display->set_size_request (PX_SCALE(68), PX_SCALE(20));
 	solo_cut_display->add_controllable_preset(_("0 dB"), 0.0);
 	solo_cut_display->add_controllable_preset(_("-6 dB"), -6.0);
@@ -239,6 +246,8 @@ MonitorSection::MonitorSection ()
 	set_tooltip (*dim_control, _("Gain reduction to use when dimming monitor outputs"));
 
 	dim_display = new ArdourDisplay ();
+	set_tooltip (*dim_display, _("Gain reduction to use when dimming monitor outputs"));
+	dim_display->set_name ("monitor section button");
 	dim_display->set_size_request (PX_SCALE(68), PX_SCALE(20));
 	dim_display->add_controllable_preset(_("0 dB"), 0.0);
 	dim_display->add_controllable_preset(_("-3 dB"), -3.0);
@@ -284,6 +293,7 @@ MonitorSection::MonitorSection ()
 	gain_control->set_size_request (PX_SCALE(60), PX_SCALE(60));
 
 	gain_display = new ArdourDisplay ();
+	gain_display->set_name("monitor section button");
 	gain_display->set_size_request (PX_SCALE(68), PX_SCALE(20));
 	gain_display->add_controllable_preset(_("0 dB"), 0.0);
 	gain_display->add_controllable_preset(_("-3 dB"), -3.0);
@@ -297,7 +307,7 @@ MonitorSection::MonitorSection ()
 
 	output_button = new ArdourButton ();
 	output_button->set_text (_("Output"));
-	output_button->set_name (X_("monitor section cut")); // XXX
+	output_button->set_name (X_("monitor section button"));
 	output_button->set_text_ellipsize (Pango::ELLIPSIZE_MIDDLE);
 	output_button->set_layout_ellipsize_width (PX_SCALE(128) * PANGO_SCALE);
 
@@ -336,6 +346,8 @@ MonitorSection::MonitorSection ()
 	/****************************************************************************
 	 * LAYOUT  top to bottom
 	 */
+
+	Gtk::Label *top_spacer = manage (new Gtk::Label);
 
 	// solo, iso information
 	HBox* rude_box = manage (new HBox);
@@ -426,6 +438,7 @@ MonitorSection::MonitorSection ()
 	 * TOP LEVEL LAYOUT
 	 */
 	vpacker.set_border_width (PX_SCALE(3));
+	vpacker.pack_start (*top_spacer,          false, false, PX_SCALE(3));
 	vpacker.pack_start (*rude_box,            false, false, PX_SCALE(3));
 	vpacker.pack_start (rude_audition_button, false, false, 0);
 	vpacker.pack_start (*solo_tbl,            false, false, PX_SCALE(8));
@@ -616,6 +629,7 @@ MonitorSection::set_session (Session* s)
 
 			if (_ui_initialized) {
 				update_processor_box ();
+				update_output_display ();
 			}
 
 			SYNCHRONIZE_TOGGLE_ACTION (ActionManager::get_toggle_action (X_("Monitor"), "UseMonitorSection"), true);

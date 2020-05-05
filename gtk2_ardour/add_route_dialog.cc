@@ -1,21 +1,27 @@
 /*
-  Copyright (C) 2003 Paul Davis
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2006 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2005-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2009-2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015-2017 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2015 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2018 Len Ovens <len@ovenwerks.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <cstdio>
 #include <cmath>
@@ -43,6 +49,7 @@
 
 #include "LuaBridge/LuaBridge.h"
 
+#include "ardour_message.h"
 #include "add_route_dialog.h"
 #include "ardour_ui.h"
 #include "route_group_dialog.h"
@@ -73,6 +80,8 @@ AddRouteDialog::AddRouteDialog ()
 	, strict_io_label (_("Pin Mode:"))
 	, mode_label (_("Record Mode:"))
 	, instrument_label (_("Instrument:"))
+	, last_route_count (1)
+	, route_count_set_by_template (false)
 	, name_edited_by_user (false)
 {
 	set_name ("AddRouteDialog");
@@ -98,14 +107,13 @@ AddRouteDialog::AddRouteDialog ()
 		     "* " + _("A group which the track(s) will be assigned to") + "\n" +
 #ifndef MIXBUS
 		     "* " + _("The pin connections mode (see tooltip for details)") + "\n" +
-		     "* " + _("Normal (non-destructive) or tape (destructive) recording mode") + "\n" +
 #endif
 		     "\n" + _("The track(s) will be added at the location specified by \"Position\"")
 		     ));
 
 		builtin_types.push_back (
 		   std::pair<string,string> (_("MIDI Tracks"), std::string () +
-		     _(" Use these settings to create one or more MIDI tracks.") + "\n\n" +
+		     _("Use these settings to create one or more MIDI tracks.") + "\n\n" +
 		     _("You may select:") + "\n" +
 		     "* " + _("The number of tracks to add") + "\n" +
 		     "* " + _("A name for the track(s)") + "\n" +
@@ -116,23 +124,6 @@ AddRouteDialog::AddRouteDialog ()
 #endif
 		     "\n" + _("The track(s) will be added at the location specified by \"Position\"")
 		     ));
-
-#ifndef MIXBUS
-		builtin_types.push_back (
-		   std::pair<string,string> (_("Audio+MIDI Tracks"), std::string () +
-		     _("Use these settings to create one or more Audio+MIDI tracks.") + "\n\n" +
-		     _("You may select:") + "\n" +
-		     "* " + _("The number of tracks to add") + "\n" +
-		     "* " + _("A name for the track(s)") + "\n" +
-		     "* " + _("An instrument plugin (or select \"None\" to drive an external device)") + "\n" +
-		     "* " + _("A group which the track(s) will be assigned to") + "\n" +
-#ifndef MIXBUS
-		     "* " + _("The pin connections mode (see tooltip for details)") + "\n" +
-		     "* " + _("Normal (non-destructive) or tape (destructive) recording mode") + "\n" +
-#endif
-		     "\n" + _("The track(s) will be added at the location specified by \"Position\"")
-		     ));
-#endif
 
 		builtin_types.push_back (
 		   std::pair<string,string> (_("Audio Busses"), std::string () +
@@ -391,6 +382,8 @@ AddRouteDialog::trk_template_row_selected ()
 	const string n = (*iter)[track_template_columns.name];
 	const string p = (*iter)[track_template_columns.path];
 
+	bool route_count_now_set_by_template = false;
+
 	if (p.substr (0, 11) == "urn:ardour:") {
 		/* lua script - meta-template */
 		const std::map<std::string, std::string> rs (ARDOUR_UI::instance()->route_setup_info (p.substr (11)));
@@ -431,21 +424,19 @@ AddRouteDialog::trk_template_row_selected ()
 			name_template_entry.set_text ("");
 		}
 
-		if ((it = rs.find ("how_many")) != rs.end()) {
-			if (atoi (it->second.c_str()) > 0) {
-				routes_adjustment.set_value (atoi (it->second.c_str()));
+		if ((it = rs.find ("how_many")) != rs.end() && atoi (it->second.c_str()) > 0) {
+			if (!route_count_set_by_template) {
+				last_route_count = routes_adjustment.get_value();
 			}
+			routes_adjustment.set_value (atoi (it->second.c_str()));
+			route_count_now_set_by_template = true;
+			route_count_set_by_template = true;
 		}
 
 		if ((it = rs.find ("track_mode")) != rs.end()) {
 			switch ((ARDOUR::TrackMode) atoi (it->second.c_str())) {
 				case ARDOUR::Normal:
 					mode_combo.set_active_text (_("Normal"));
-					break;
-				case ARDOUR::Destructive:
-					if (!ARDOUR::Profile->get_mixbus ()) {
-						mode_combo.set_active_text (_("Tape"));
-					}
 					break;
 				default: // "NonLayered" enum is still present for session-format compat
 					break;
@@ -504,6 +495,11 @@ AddRouteDialog::trk_template_row_selected ()
 		routes_spinner.set_sensitive (true);
 		name_template_entry.set_sensitive (true);
 		track_type_chosen ();
+	}
+
+	if (!route_count_now_set_by_template && route_count_set_by_template) {
+		routes_adjustment.set_value (last_route_count);
+		route_count_set_by_template = false;
 	}
 }
 
@@ -570,8 +566,6 @@ AddRouteDialog::type_wanted()
 		return MidiBus;
 	} else if (str == _("MIDI Tracks")){
 		return MidiTrack;
-	} else if (str == _("Audio+MIDI Tracks")) {
-		return MixedTrack;
 	} else if (str == _("Audio Tracks")) {
 		return AudioTrack;
 	} else if (str == _("VCA Masters")) {
@@ -597,9 +591,6 @@ AddRouteDialog::maybe_update_name_template_entry ()
 		break;
 	case MidiTrack:
 		name_template_entry.set_text (_("MIDI"));
-		break;
-	case MixedTrack:
-		name_template_entry.set_text (_("Audio+MIDI"));
 		break;
 	case AudioBus:
 	case MidiBus:
@@ -662,34 +653,6 @@ AddRouteDialog::track_type_chosen ()
 		insert_at_combo.set_sensitive (true);
 
 		break;
-	case MixedTrack:
-		{
-			MessageDialog msg (_("Audio+MIDI tracks are intended for use <b>ONLY</b> with plugins that use both audio and MIDI input data.\n\n"
-					     "Use a normal audio or MIDI track if you do not plan to use such a plugin."),
-					   true, MESSAGE_INFO, BUTTONS_OK, true);
-			msg.set_position (WIN_POS_MOUSE);
-			msg.run ();
-		}
-
-		configuration_label.set_sensitive (true);
-		channel_combo.set_sensitive (true);
-
-		mode_label.set_sensitive (true);
-		mode_combo.set_sensitive (true);
-
-		instrument_label.set_sensitive (true);
-		instrument_combo.set_sensitive (true);
-
-		group_label.set_sensitive (true);
-		route_group_combo.set_sensitive (true);
-
-		strict_io_label.set_sensitive (true);
-		strict_io_combo.set_sensitive (true);
-
-		insert_label.set_sensitive (true);
-		insert_at_combo.set_sensitive (true);
-
-		break;
 	case AudioBus:
 
 		configuration_label.set_sensitive (true);
@@ -755,8 +718,8 @@ AddRouteDialog::track_type_chosen ()
 		break;
 	case FoldbackBus:
 
-		configuration_label.set_sensitive (false);
-		channel_combo.set_sensitive (false);
+		configuration_label.set_sensitive (true);
+		channel_combo.set_sensitive (true);
 
 		mode_label.set_sensitive (false);
 		mode_combo.set_sensitive (false);
@@ -792,8 +755,8 @@ AddRouteDialog::name_template_is_default () const
 
 	if (n == _("Audio") ||
 	    n == _("MIDI") ||
-	    n == _("Audio+MIDI") ||
 	    n == _("Bus") ||
+	    n == _("Foldback") ||
 	    n == VCA::default_name_template()) {
 		return true;
 	}
@@ -813,10 +776,6 @@ AddRouteDialog::refill_track_modes ()
 	vector<string> s;
 
 	s.push_back (_("Normal"));
-	if (!ARDOUR::Profile->get_mixbus ()) {
-		s.push_back (_("Tape"));
-	}
-
 	set_popdown_strings (mode_combo, s);
 	mode_combo.set_active_text (s.front());
 }
@@ -829,8 +788,6 @@ AddRouteDialog::mode ()
 		return ARDOUR::Normal;
 	} else if (str == _("Non Layered")){
 		return ARDOUR::NonLayered;
-	} else if (str == _("Tape")) {
-		return ARDOUR::Destructive;
 	} else {
 		fatal << string_compose (X_("programming error: unknown track mode in add route dialog combo = %1"), str)
 		      << endmsg;
@@ -869,13 +826,8 @@ AddRouteDialog::channels ()
 		ret.set (DataType::MIDI, 1);
 		break;
 
-	case MixedTrack:
-		ret.set (DataType::AUDIO, channel_count ());
-		ret.set (DataType::MIDI, 1);
-		break;
-
 	case FoldbackBus:
-		ret.set (DataType::AUDIO, 2);
+		ret.set (DataType::AUDIO, channel_count ());
 		ret.set (DataType::MIDI, 0);
 		break;
 
@@ -986,7 +938,7 @@ AddRouteDialog::refill_channel_setups ()
 		row[track_template_columns.name] = (*s)->name;
 		row[track_template_columns.path] = "urn:ardour:" + (*s)->path;
 		row[track_template_columns.description] = (*s)->description;
-		row[track_template_columns.modified_with] = _("{Factory Template}");
+		row[track_template_columns.modified_with] = string_compose ("{%1}", _("Factory Template"));
 
 		if ((*s)->name == "Create Audio Tracks Interactively" && Profile->get_mixbus ()) {
 			trk_template_chooser.get_selection()->select(row);

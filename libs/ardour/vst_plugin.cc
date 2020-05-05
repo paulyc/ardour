@@ -1,21 +1,27 @@
 /*
-    Copyright (C) 2010 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2006 Sampo Savolainen <v2@iki.fi>
+ * Copyright (C) 2005-2006 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2005-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2007-2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2007-2011 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2016 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2013-2015 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <glib.h>
 #include "pbd/gstdio_compat.h"
@@ -308,8 +314,6 @@ VSTPlugin::set_state (const XMLNode& node, int version)
 {
 	LocaleGuard lg;
 	int ret = -1;
-
-#ifndef NO_PLUGIN_STATE
 	XMLNode* child;
 
 	if ((child = find_named_node (node, X_("chunk"))) != 0) {
@@ -347,7 +351,6 @@ VSTPlugin::set_state (const XMLNode& node, int version)
 		ret = 0;
 
 	}
-#endif
 
 	Plugin::set_state (node, version);
 	return ret;
@@ -403,13 +406,13 @@ VSTPlugin::get_parameter_descriptor (uint32_t which, ParameterDescriptor& desc) 
 
 		/* old style */
 
-		char label[VestigeMaxLabelLen];
+		char pname[VestigeMaxLabelLen];
 		/* some VST plugins expect this buffer to be zero-filled */
-		memset (label, 0, sizeof (label));
+		memset (pname, 0, sizeof (pname));
 
-		_plugin->dispatcher (_plugin, effGetParamName, which, 0, label, 0);
+		_plugin->dispatcher (_plugin, effGetParamName, which, 0, pname, 0);
 
-		desc.label = Glib::locale_to_utf8 (label);
+		desc.label = Glib::locale_to_utf8 (pname);
 		desc.lower = 0.0f;
 		desc.upper = 1.0f;
 		desc.smallstep = desc.step = 1.f / 300.f;
@@ -807,9 +810,10 @@ VSTPlugin::has_editor () const
 }
 
 bool
-VSTPlugin::print_parameter (uint32_t param, char *buf, uint32_t len) const
+VSTPlugin::print_parameter (uint32_t param, std::string& rv) const
 {
-	char *first_nonws;
+	char buf[64];
+	size_t len = sizeof(buf);
 	assert (len > VestigeMaxShortLabelLen);
 	memset (buf, 0, len);
 
@@ -821,9 +825,9 @@ VSTPlugin::print_parameter (uint32_t param, char *buf, uint32_t len) const
 
 	buf[len - 1] = '\0';
 
-	first_nonws = buf;
+	char* first_nonws = buf;
 	while (*first_nonws && isspace (*first_nonws)) {
-		first_nonws++;
+		++first_nonws;
 	}
 
 	if (*first_nonws == '\0') {
@@ -831,6 +835,18 @@ VSTPlugin::print_parameter (uint32_t param, char *buf, uint32_t len) const
 	}
 
 	memmove (buf, first_nonws, strlen (buf) - (first_nonws - buf) + 1);
+
+	/* optional Unit label */
+	char label[VestigeMaxNameLen];
+	memset (label, 0, sizeof (label));
+	_plugin->dispatcher (_plugin, 6 /* effGetParamLabel */, param, 0, label, 0);
+
+	if (strlen (label) > 0) {
+		std::string lbl = std::string (" ") + Glib::locale_to_utf8 (label);
+		strncat (buf, lbl.c_str(), strlen (buf) - 1);
+	}
+
+	rv = std::string (buf);
 	return true;
 }
 

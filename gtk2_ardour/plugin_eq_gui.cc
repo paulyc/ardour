@@ -1,21 +1,24 @@
 /*
- * Copyright (C) 2018 Robin Gareus <robin@gareus.org>
- * Copyright (C) 2008 Paul Davis
- * Original Author: Sampo Savolainen
+ * Copyright (C) 2008-2009 Sampo Savolainen <v2@iki.fi>
+ * Copyright (C) 2008-2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2008-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2009-2011 David Robillard <d@drobilla.net>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2016 Julien "_FrnchFrgg_" RIVAUD <frnchfrgg@free.fr>
  *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 #include <algorithm>
@@ -221,7 +224,7 @@ void
 PluginEqGui::start_updating ()
 {
 	if (!_update_connection.connected() && is_visible()) {
-		_update_connection = Glib::signal_timeout().connect (sigc::mem_fun (this, &PluginEqGui::timeout_callback), 250);
+		_update_connection = Glib::signal_timeout().connect (sigc::mem_fun (this, &PluginEqGui::timeout_callback), 250, Glib::PRIORITY_DEFAULT_IDLE);
 	}
 }
 
@@ -407,8 +410,14 @@ PluginEqGui::run_impulse_analysis ()
 	}
 
 	samplepos_t sample_pos = 0;
-	samplecnt_t latency = _plugin->signal_latency ();
+	samplecnt_t latency = _plugin_insert->effective_latency ();
 	samplecnt_t samples_remain = _buffer_size + latency;
+
+	/* Note: https://discourse.ardour.org/t/plugins-ladspa-questions/101292/15
+	 * Capture the complete response from the beginning, and more than "latency" samples,
+	 * Then unwrap the phase-response corresponding to reported latency, leaving the
+	 * magnitude unchanged.
+	 */
 
 	_impulse_fft->reset ();
 

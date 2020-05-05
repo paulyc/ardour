@@ -1,22 +1,27 @@
 /*
-    Copyright (C) 1999-2005 Paul Barton-Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-    $Id$
-*/
+ * Copyright (C) 1999-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2005 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2006-2007 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2007-2011 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2011 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2013 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <cmath>
 #include <fcntl.h>
@@ -31,6 +36,7 @@
 #include "pbd/error.h"
 #include "pbd/touchable.h"
 #include "pbd/failed_constructor.h"
+#include "pbd/localtime_r.h"
 #include "pbd/pthread_utils.h"
 #include "pbd/replace_all.h"
 
@@ -75,7 +81,10 @@ UI::UI (string application_name, string thread_name, int *argc, char ***argv)
 {
 	theMain = new Main (argc, argv);
 
-	pthread_set_name ("gui");
+	char buf[18];
+	/* pthread public name has a 16 char limit */
+	snprintf (buf, sizeof (buf), "%.11sGUI", PROGRAM_NAME);
+	pthread_set_name (buf);
 
 	_active = false;
 
@@ -505,12 +514,42 @@ UI::do_request (UIRequest* req)
   ======================================================================*/
 
 void
-UI::dump_errors (std::ostream& ostr)
+UI::dump_errors (std::ostream& ostr, size_t limit)
 {
 	Glib::Threads::Mutex::Lock lm (error_lock);
-	ostr << endl << X_("Errors/Messages:") << endl;
-	for (list<string>::const_iterator i = error_stack.begin(); i != error_stack.end(); ++i) {
-		ostr << *i << endl;
+	bool first = true;
+
+	if (limit > 0) {
+		/* reverse listing, Errors only */
+		for (list<string>::reverse_iterator i = error_stack.rbegin(); i != error_stack.rend(); ++i) {
+			if ((*i).substr (0, 9) == X_("WARNING: ") || (*i).substr (0, 6) == X_("INFO: ")) {
+				continue;
+			}
+			if (first) {
+				first = false;
+			}
+			ostr << *i << endl;
+			if (--limit == 0) {
+				ostr << "..." << endl;
+				break;
+			}
+		}
+	}
+
+	if (first) {
+		for (list<string>::const_iterator i = error_stack.begin(); i != error_stack.end(); ++i) {
+			if (first) {
+				ostr << endl << X_("Log Messages:") << endl;
+				first = false;
+			}
+			ostr << *i << endl;
+			if (limit > 0) {
+				if (--limit == 0) {
+					ostr << "..." << endl;
+					break;
+				}
+			}
+		}
 	}
 	ostr << endl;
 }
@@ -594,7 +633,7 @@ UI::process_error_message (Transmitter::Channel chn, const char *str)
 	default:
 		/* no choice but to use text/console output here */
 		cerr << "programmer error in UI::check_error_messages (channel = " << chn << ")\n";
-		::exit (1);
+		::exit (EXIT_FAILURE);
 	}
 
 	errors->text().get_buffer()->begin_user_action();
@@ -637,7 +676,9 @@ void
 UI::display_message (const char *prefix, gint /*prefix_len*/, RefPtr<TextBuffer::Tag> ptag, RefPtr<TextBuffer::Tag> mtag, const char *msg)
 {
 	RefPtr<TextBuffer> buffer (errors->text().get_buffer());
+	Glib::DateTime tm (g_date_time_new_now_local ());
 
+	buffer->insert_with_tag(buffer->end(), tm.format ("%FT%H:%M:%S "), ptag);
 	buffer->insert_with_tag(buffer->end(), prefix, ptag);
 	buffer->insert_with_tag(buffer->end(), msg, mtag);
 	buffer->insert_with_tag(buffer->end(), "\n", mtag);

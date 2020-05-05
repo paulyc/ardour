@@ -1,21 +1,27 @@
 /*
-    Copyright (C) 2002 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2006-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2006-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2014-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2014-2018 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2014-2018 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015-2017 Tim Mayberry <mojofunk@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <algorithm>
 #include <sigc++/bind.h>
@@ -98,8 +104,7 @@ operator== (const Selection& a, const Selection& b)
 		a.time == b.time &&
 		a.lines == b.lines &&
 		a.playlists == b.playlists &&
-		a.midi_notes == b.midi_notes &&
-		a.midi_regions == b.midi_regions;
+		a.midi_notes == b.midi_notes;
 }
 
 /** Clear everything from the Selection */
@@ -113,7 +118,6 @@ Selection::clear ()
 	clear_time ();
 	clear_playlists ();
 	clear_midi_notes ();
-	clear_midi_regions ();
 	clear_markers ();
 	pending_midi_note_selection.clear();
 }
@@ -126,7 +130,6 @@ Selection::clear_objects (bool with_signal)
 	clear_lines(with_signal);
 	clear_playlists (with_signal);
 	clear_midi_notes (with_signal);
-	clear_midi_regions (with_signal);
 }
 
 void
@@ -162,6 +165,10 @@ Selection::clear_regions (bool with_signal)
 void
 Selection::clear_midi_notes (bool with_signal)
 {
+	/* Remmeber: MIDI notes are only stored here if we're using a Selection
+	   object as a cut buffer.
+	*/
+
 	if (!midi_notes.empty()) {
 		for (MidiNoteSelection::iterator x = midi_notes.begin(); x != midi_notes.end(); ++x) {
 			delete *x;
@@ -169,30 +176,6 @@ Selection::clear_midi_notes (bool with_signal)
 		midi_notes.clear ();
 		if (with_signal) {
 			MidiNotesChanged ();
-		}
-	}
-
-	// clear note selections for MRV's that have note selections
-	// this will cause the MRV to be removed from the list
-	for (MidiRegionSelection::iterator i = midi_regions.begin();
-	     i != midi_regions.end();) {
-		MidiRegionSelection::iterator tmp = i;
-		++tmp;
-		MidiRegionView* mrv = dynamic_cast<MidiRegionView*>(*i);
-		if (mrv) {
-			mrv->clear_selection();
-		}
-		i = tmp;
-	}
-}
-
-void
-Selection::clear_midi_regions (bool with_signal)
-{
-	if (!midi_regions.empty()) {
-		midi_regions.clear ();
-		if (with_signal) {
-			MidiRegionsChanged ();
 		}
 	}
 }
@@ -299,23 +282,6 @@ Selection::toggle (RegionView* r)
 	}
 
 	RegionsChanged ();
-}
-
-void
-Selection::toggle (MidiRegionView* mrv)
-{
-	clear_time(); // enforce object/range exclusivity
-	clear_tracks(); // enforce object/track exclusivity
-
-	MidiRegionSelection::iterator i;
-
-	if ((i = find (midi_regions.begin(), midi_regions.end(), mrv)) == midi_regions.end()) {
-		add (mrv);
-	} else {
-		midi_regions.erase (i);
-	}
-
-	MidiRegionsChanged ();
 }
 
 void
@@ -465,21 +431,6 @@ Selection::add (RegionView* r)
 			clear_tracks(); // enforce object/track exclusivity
 			RegionsChanged ();
 		}
-	}
-}
-
-void
-Selection::add (MidiRegionView* mrv)
-{
-	DEBUG_TRACE(DEBUG::Selection, string_compose("Selection::add MRV %1\n", mrv));
-
-	clear_time(); // enforce object/range exclusivity
-	clear_tracks(); // enforce object/track exclusivity
-
-	if (find (midi_regions.begin(), midi_regions.end(), mrv) == midi_regions.end()) {
-		midi_regions.push_back (mrv);
-		/* XXX should we do this? */
-		MidiRegionsChanged ();
 	}
 }
 
@@ -643,19 +594,6 @@ Selection::remove (RegionView* r)
 }
 
 void
-Selection::remove (MidiRegionView* mrv)
-{
-	DEBUG_TRACE(DEBUG::Selection, string_compose("Selection::remove MRV %1\n", mrv));
-
-	MidiRegionSelection::iterator x;
-
-	if ((x = find (midi_regions.begin(), midi_regions.end(), mrv)) != midi_regions.end()) {
-		midi_regions.erase (x);
-		MidiRegionsChanged ();
-	}
-}
-
-void
 Selection::remove (uint32_t selection_id)
 {
 	if (time.empty()) {
@@ -729,17 +667,6 @@ Selection::set (const RegionSelection& rs)
 	clear_objects();
 	regions = rs;
 	RegionsChanged(); /* EMIT SIGNAL */
-}
-
-void
-Selection::set (MidiRegionView* mrv)
-{
-	if (mrv) {
-		clear_time(); // enforce region/object exclusivity
-		clear_tracks(); // enforce object/track exclusivity
-	}
-	clear_objects ();
-	add (mrv);
 }
 
 void
@@ -866,8 +793,7 @@ Selection::empty (bool internal_selection)
 		lines.empty () &&
 		time.empty () &&
 		playlists.empty () &&
-		markers.empty() &&
-		midi_regions.empty()
+		markers.empty()
 		;
 
 	if (!internal_selection) {
@@ -1695,4 +1621,19 @@ Selection::core_selection_changed (PropertyChange const & what_changed)
 	}
 
 	TracksChanged();
+}
+
+MidiRegionSelection
+Selection::midi_regions ()
+{
+	MidiRegionSelection ms;
+
+	for (RegionSelection::iterator i = regions.begin(); i != regions.end(); ++i) {
+		MidiRegionView* mrv = dynamic_cast<MidiRegionView*>(*i);
+		if (mrv) {
+			ms.add (mrv);
+		}
+	}
+
+	return ms;
 }

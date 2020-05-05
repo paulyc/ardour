@@ -1,21 +1,33 @@
 /*
-  Copyright (C) 2000 Paul Davis
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2000-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2005-2009 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2006-2007 Jesse Chappell <jesse@essej.net>
+ * Copyright (C) 2006-2009 Sampo Savolainen <v2@iki.fi>
+ * Copyright (C) 2006-2015 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2007-2015 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2008-2009 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2008-2009 Sakari Bergen <sakari.bergen@beatwaves.net>
+ * Copyright (C) 2012-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2013-2018 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2014-2018 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2015-2018 Len Ovens <len@ovenwerks.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_session_h__
 #define __ardour_session_h__
@@ -53,7 +65,7 @@
 
 #include "lua/luastate.h"
 
-#include "evoral/Range.hpp"
+#include "evoral/Range.h"
 
 #include "midi++/types.h"
 #include "midi++/mmc.h"
@@ -76,7 +88,7 @@
 #include "ardour/presentation_info.h"
 #include "ardour/route.h"
 #include "ardour/route_graph.h"
-
+#include "ardour/transport_api.h"
 
 class XMLTree;
 class XMLNode;
@@ -106,6 +118,7 @@ class Curve;
 namespace ARDOUR {
 
 class Amp;
+class AsyncMIDIPort;
 class AudioEngine;
 class AudioFileSource;
 class AudioRegion;
@@ -155,6 +168,7 @@ class Source;
 class Speakers;
 class TempoMap;
 class TransportMaster;
+struct TransportFSM;
 class Track;
 class UI_TransportMaster;
 class VCAManager;
@@ -174,7 +188,7 @@ private:
 };
 
 /** Ardour Session */
-class LIBARDOUR_API Session : public PBD::StatefulDestructible, public PBD::ScopedConnectionList, public SessionEventManager
+class LIBARDOUR_API Session : public PBD::StatefulDestructible, public PBD::ScopedConnectionList, public SessionEventManager, public TransportAPI
 {
 private:
 
@@ -192,8 +206,9 @@ public:
 	Session (AudioEngine&,
 	         const std::string& fullpath,
 	         const std::string& snapshot_name,
-	         BusProfile* bus_profile = 0,
-	         std::string mix_template = "");
+	         BusProfile const * bus_profile = 0,
+	         std::string mix_template = "",
+	         bool unnamed = false);
 
 	virtual ~Session ();
 
@@ -227,7 +242,10 @@ public:
 	bool loading () const                          { return _state_of_the_state & Loading; }
 	bool cannot_save () const                      { return _state_of_the_state & CannotSave; }
 	bool in_cleanup () const                       { return _state_of_the_state & InCleanup; }
-	bool inital_connect_or_deletion_in_progress () { return _state_of_the_state & (InitialConnecting | Deletion); }
+	bool inital_connect_or_deletion_in_progress () const { return _state_of_the_state & (InitialConnecting | Deletion); }
+	bool unnamed() const;
+
+	void end_unnamed_status () const;
 
 	PBD::Signal0<void> DirtyChanged;
 
@@ -248,13 +266,15 @@ public:
 	std::string construct_peak_filepath (const std::string& audio_path, const bool in_session = false, const bool old_peak_name = false) const;
 
 	bool audio_source_name_is_unique (const std::string& name);
-	std::string format_audio_source_name (const std::string& legalized_base, uint32_t nchan, uint32_t chan, bool destructive, bool take_required, uint32_t cnt, bool related_exists);
+	std::string format_audio_source_name (const std::string& legalized_base, uint32_t nchan, uint32_t chan, bool take_required, uint32_t cnt, bool related_exists);
 	std::string new_audio_source_path_for_embedded (const std::string& existing_path);
-	std::string new_audio_source_path (const std::string&, uint32_t nchans, uint32_t chan, bool destructive, bool take_required);
+	std::string new_audio_source_path (const std::string&, uint32_t nchans, uint32_t chan, bool take_required);
 	std::string new_midi_source_path (const std::string&, bool need_source_lock = true);
+
 	/** create a new track or bus from a template (XML path)
 	 * @param how_many how many tracks or busses to create
 	 * @param template_path path to xml template file
+	 * @param insert_at position where to add new track, use PresentationInfo::max_order to append at the end.
 	 * @param name name (prefix) of the route to create
 	 * @param pd Playlist disposition
 	 * @return list of newly created routes
@@ -275,7 +295,7 @@ public:
 	BufferSet& get_mix_buffers (ChanCount count = ChanCount::ZERO);
 
 	bool have_rec_enabled_track () const;
-    bool have_rec_disabled_track () const;
+	bool have_rec_disabled_track () const;
 
 	bool have_captured() const { return _have_captured; }
 
@@ -315,6 +335,8 @@ public:
 	uint32_t nroutes() const { return routes.reader()->size(); }
 	uint32_t ntracks () const;
 	uint32_t nbusses () const;
+
+	bool plot_process_graph (std::string const& file_name) const;
 
 	boost::shared_ptr<BundleList> bundles () {
 		return _bundles.reader ();
@@ -411,6 +433,10 @@ public:
 	 */
 	PBD::Signal2<void, RouteGroup *, boost::weak_ptr<Route> > RouteRemovedFromRouteGroup;
 
+	/** Emitted when a foldback send is created or deleted
+	 */
+	PBD::Signal0<void> FBSendsChanged;
+
 	/* Step Editing status changed */
 	PBD::Signal1<void,bool> StepEditStatusChange;
 
@@ -422,7 +448,7 @@ public:
 	void request_roll_at_and_return (samplepos_t start, samplepos_t return_to);
 	void request_bounded_roll (samplepos_t start, samplepos_t end);
 	void request_stop (bool abort = false, bool clear_state = false, TransportRequestSource origin = TRS_UI);
-	void request_locate (samplepos_t sample, bool with_roll = false, TransportRequestSource origin = TRS_UI);
+	void request_locate (samplepos_t sample, LocateTransportDisposition ltd = RollIfAppropriate, TransportRequestSource origin = TRS_UI);
 
 	void request_play_loop (bool yn, bool leave_rolling = false);
 	bool get_play_loop () const { return play_loop; }
@@ -434,13 +460,18 @@ public:
 	void allow_auto_play (bool yn);
 	void request_transport_speed (double speed, bool as_default = true, TransportRequestSource origin = TRS_UI);
 	void request_transport_speed_nonzero (double, bool as_default = true, TransportRequestSource origin = TRS_UI);
-	void request_overwrite_buffer (boost::shared_ptr<Route>);
+	void request_overwrite_buffer (boost::shared_ptr<Track>, OverwriteReason);
 	void adjust_playback_buffering();
 	void adjust_capture_buffering();
 
 	bool global_locate_pending() const { return _global_locate_pending; }
-	bool locate_pending() const { return static_cast<bool>(post_transport_work()&PostTransportLocate); }
+	bool locate_pending() const;
+	bool locate_initiated() const;
+	bool declick_in_progress () const;
 	bool transport_locked () const;
+
+	bool had_destructive_tracks () const;
+	void set_had_destructive_tracks (bool yn);
 
 	int wipe ();
 
@@ -481,6 +512,9 @@ public:
 	samplecnt_t worst_input_latency () const  { return _worst_input_latency; }
 	samplecnt_t worst_route_latency () const  { return _worst_route_latency; }
 	samplecnt_t worst_latency_preroll () const;
+	samplecnt_t worst_latency_preroll_buffer_size_ceil () const;
+
+	PBD::Signal1<void, bool> LatencyUpdated;
 
 	struct SaveAs {
 		std::string new_parent_folder;  /* parent folder where new session folder will be created */
@@ -517,6 +551,8 @@ public:
 	 * @param pending save a 'recovery', not full state (default: false)
 	 * @param switch_to_snapshot switch to given snapshot after saving (default: false)
 	 * @param template_only save a session template (default: false)
+	 * @param for_archive save only data relevant for session-archive
+	 * @param only_used_assets skip Sources that are not used, mainly useful with \p for_archive
 	 * @return zero on success
 	 */
 	int save_state (std::string snapshot_name,
@@ -599,6 +635,10 @@ public:
 						_session->_save_queued = false;
 						_session->save_state ("");
 					}
+					while (_session->_save_queued_pending) {
+						_session->_save_queued_pending = false;
+						_session->save_state ("", true);
+					}
 				}
 			}
 		private:
@@ -606,23 +646,27 @@ public:
 	};
 
 	class ProcessorChangeBlocker {
-		public:
-			ProcessorChangeBlocker (Session* s, bool rc = true)
-				: _session (s)
-				, _reconfigure_on_delete (rc)
-			{
-				g_atomic_int_inc (&s->_ignore_route_processor_changes);
-			}
-			~ProcessorChangeBlocker () {
-				if (g_atomic_int_dec_and_test (&_session->_ignore_route_processor_changes)) {
+	public:
+		ProcessorChangeBlocker (Session* s, bool rc = true)
+			: _session (s)
+			, _reconfigure_on_delete (rc)
+		{
+			g_atomic_int_inc (&s->_ignore_route_processor_changes);
+		}
+
+		~ProcessorChangeBlocker ()
+		{
+			if (g_atomic_int_dec_and_test (&_session->_ignore_route_processor_changes)) {
+				if (g_atomic_int_compare_and_exchange (&_session->_ignored_a_processor_change, 1, 0)) {
 					if (_reconfigure_on_delete) {
 						_session->route_processors_changed (RouteProcessorChange ());
 					}
 				}
 			}
-		private:
-			Session* _session;
-			bool _reconfigure_on_delete;
+		}
+	private:
+		Session* _session;
+		bool _reconfigure_on_delete;
 	};
 
 	RouteGroup* new_route_group (const std::string&);
@@ -657,7 +701,8 @@ public:
 		uint32_t how_many,
 		std::string name_template,
 		PresentationInfo::order_t order,
-		TrackMode mode = Normal
+		TrackMode mode = Normal,
+		bool input_auto_connect = true
 		);
 
 	std::list<boost::shared_ptr<MidiTrack> > new_midi_track (
@@ -690,6 +735,7 @@ public:
 	samplepos_t audible_sample (bool* latent_locate = NULL) const;
 	samplepos_t requested_return_sample() const { return _requested_return_sample; }
 	void set_requested_return_sample(samplepos_t return_to);
+	boost::optional<samplepos_t> const & nominal_jack_transport_sample() { return _nominal_jack_transport_sample; }
 
 	bool compute_audible_delta (samplepos_t& pos_and_delta) const;
 	samplecnt_t remaining_latency_preroll () const { return _remaining_latency_preroll; }
@@ -734,10 +780,16 @@ public:
 		return 0;
 	}
 	double transport_speed() const { return _count_in_samples > 0 ? 0. : _transport_speed; }
-	bool   transport_stopped() const { return _transport_speed == 0.0; }
-	bool   transport_rolling() const { return _transport_speed != 0.0 && _count_in_samples == 0 && _remaining_latency_preroll == 0; }
+	bool   transport_stopped() const;
+	bool   transport_stopped_or_stopping() const;
+	bool   transport_rolling() const;
+	bool   transport_will_roll_forwards() const;
 
 	bool silent () { return _silent; }
+
+	bool punch_is_possible () const;
+	bool loop_is_possible () const;
+	PBD::Signal0<void> PunchLoopConstraintChange;
 
 	TempoMap&       tempo_map()       { return *_tempo_map; }
 	const TempoMap& tempo_map() const { return *_tempo_map; }
@@ -777,14 +829,10 @@ public:
 	int  cleanup_sources (CleanupReport&);
 	int  cleanup_trash_sources (CleanupReport&);
 
-	int destroy_sources (std::list<boost::shared_ptr<Source> >);
+	int destroy_sources (std::list<boost::shared_ptr<Source> > const&);
 
 	int remove_last_capture ();
-
-	/** handlers should return 0 for "everything OK", and any other value for
-	 * "cannot setup audioengine".
-	 */
-	static PBD::Signal1<int,uint32_t> AudioEngineSetupRequired;
+	void get_last_capture_sources (std::list<boost::shared_ptr<Source> >&);
 
 	/** handlers should return -1 for "stop cleanup",
 	    0 for "yes, delete this playlist",
@@ -805,7 +853,7 @@ public:
 	static PBD::Signal0<int> AskAboutPendingState;
 
 	boost::shared_ptr<AudioFileSource> create_audio_source_for_session (
-		size_t, std::string const &, uint32_t, bool destructive);
+		size_t, std::string const &, uint32_t);
 
 	boost::shared_ptr<MidiSource> create_midi_source_for_session (std::string const &);
 	boost::shared_ptr<MidiSource> create_midi_source_by_stealing_name (boost::shared_ptr<Track>);
@@ -1090,6 +1138,10 @@ public:
 		return _exporting;
 	}
 
+	bool realtime_export() const {
+		return _realtime_export;
+	}
+
 	bool bounce_processing() const {
 		return _bounce_processing_active;
 	}
@@ -1101,19 +1153,15 @@ public:
 
 	enum PostTransportWork {
 		PostTransportStop               = 0x1,
-		PostTransportDuration           = 0x2,
-		PostTransportLocate             = 0x4,
-		PostTransportRoll               = 0x8,
-		PostTransportAbort              = 0x10,
-		PostTransportOverWrite          = 0x20,
-		/* PostTransportSpeed           = 0x40, */
-		PostTransportAudition           = 0x80,
-		PostTransportReverse            = 0x100,
-		/* PostTransportInputChange     = 0x200, */
-		/*PostTransportCurveRealloc       = 0x400, */
-		PostTransportClearSubstate      = 0x800,
-		PostTransportAdjustPlaybackBuffering  = 0x1000,
-		PostTransportAdjustCaptureBuffering   = 0x2000
+		PostTransportLocate             = 0x2,
+		PostTransportRoll               = 0x4,
+		PostTransportAbort              = 0x8,
+		PostTransportOverWrite          = 0x10,
+		PostTransportAudition           = 0x20,
+		PostTransportReverse            = 0x40,
+		PostTransportClearSubstate      = 0x80,
+		PostTransportAdjustPlaybackBuffering  = 0x100,
+		PostTransportAdjustCaptureBuffering   = 0x200
 	};
 
 	boost::shared_ptr<SessionPlaylists> playlists () const { return _playlists; }
@@ -1133,6 +1181,8 @@ public:
 	void remove_dir_from_search_path (const std::string& path, DataType type);
 
 	std::list<std::string> unknown_processors () const;
+
+	std::list<std::string> missing_filesources (DataType) const;
 
 	/** Emitted when a feedback cycle has been detected within Ardour's signal
 	    processing path.  Until it is fixed (by the user) some (unspecified)
@@ -1172,12 +1222,12 @@ public:
 
 	/* asynchronous MIDI control ports */
 
-	boost::shared_ptr<Port> midi_input_port () const;
-	boost::shared_ptr<Port> midi_output_port () const;
 	boost::shared_ptr<Port> mmc_output_port () const;
 	boost::shared_ptr<Port> mmc_input_port () const;
 	boost::shared_ptr<Port> scene_input_port () const;
 	boost::shared_ptr<Port> scene_output_port () const;
+
+	boost::shared_ptr<AsyncMIDIPort> vkbd_output_port () const;
 
 	/* synchronous MIDI ports used for synchronization */
 
@@ -1211,15 +1261,25 @@ protected:
 	friend class AudioEngine;
 	void set_block_size (pframes_t nframes);
 	void set_sample_rate (samplecnt_t nframes);
-#ifdef USE_TRACKS_CODE_FEATURES
-	void reconnect_existing_routes (bool withLock, bool reconnect_master = true, bool reconnect_inputs = true, bool reconnect_outputs = true);
-#endif
 
 	friend class Route;
-	void update_latency_compensation (bool force = false);
+	void update_latency_compensation (bool force, bool called_from_backend);
+
+	/* transport API */
+
+	void locate (samplepos_t, bool with_roll, bool with_flush, bool for_loop_end=false, bool force=false, bool with_mmc=true);
+	void stop_transport (bool abort = false, bool clear_state = false);
+	void start_transport ();
+	void butler_completed_transport_work ();
+	void post_locate ();
+	void schedule_butler_for_transport_work ();
+	bool should_roll_after_locate () const;
+	double speed() const { return _transport_speed; }
+	samplepos_t position() const { return _transport_sample; }
+	void set_transport_speed (double speed, bool abort, bool clear_state, bool as_default);
 
 private:
-	int  create (const std::string& mix_template, BusProfile*);
+	int  create (const std::string& mix_template, BusProfile const *, bool unnamed);
 	void destroy ();
 
 	static guint _name_id_counter;
@@ -1243,7 +1303,6 @@ private:
 	samplecnt_t             _base_sample_rate;     // sample-rate of the session at creation time, "native" SR
 	samplecnt_t             _nominal_sample_rate;  // overridden by audioengine setting
 	samplecnt_t             _current_sample_rate;  // this includes video pullup offset
-	int                      transport_sub_state;
 	mutable gint            _record_status;
 	samplepos_t             _transport_sample;
 	gint                    _seek_counter;
@@ -1282,16 +1341,13 @@ private:
 	void add_monitor_section ();
 	void remove_monitor_section ();
 
-	void initialize_latencies ();
 	void update_latency (bool playback);
-	bool update_route_latency (bool reverse, bool apply_to_delayline);
-
-	void set_worst_io_latencies ();
+	bool update_route_latency (bool reverse, bool apply_to_delayline, bool* delayline_update_needed);
+	void initialize_latencies ();
 	void set_worst_output_latency ();
 	void set_worst_input_latency ();
 
 	void send_latency_compensation_change ();
-	void set_worst_io_latencies_x (IOChange, void *);
 
 	void ensure_buffers (ChanCount howmany = ChanCount::ZERO);
 
@@ -1301,6 +1357,8 @@ private:
 	void process_audition       (pframes_t);
 	void process_export         (pframes_t);
 	void process_export_fw      (pframes_t);
+
+	samplecnt_t calc_preroll_subcycle (samplecnt_t) const;
 
 	void block_processing() { g_atomic_int_set (&processing_prohibited, 1); }
 	void unblock_processing() { g_atomic_int_set (&processing_prohibited, 0); }
@@ -1316,13 +1374,38 @@ private:
 		Running  /* lock achieved, master is generating meaningful speed & position */
 	};
 
-	TransportMasterState transport_master_tracking_state;
 	samplepos_t master_wait_end;
-	void track_transport_master (float slave_speed, samplepos_t slave_transport_sample);
+
+	enum TransportMasterAction {
+		TransportMasterRelax,
+		TransportMasterNoRoll,
+		TransportMasterLocate,
+		TransportMasterStart,
+		TransportMasterStop,
+		TransportMasterWait,
+	};
+
+	struct TransportMasterStrategy {
+		TransportMasterAction action;
+		samplepos_t target;
+		LocateTransportDisposition roll_disposition;
+		double catch_speed;
+
+		TransportMasterStrategy ()
+			: action (TransportMasterRelax)
+			, target (0)
+			, roll_disposition (MustStop)
+			, catch_speed (0.) {}
+	};
+
+	TransportMasterStrategy transport_master_strategy;
+	double plan_master_strategy (pframes_t nframes, double master_speed, samplepos_t master_transport_sample, double catch_speed);
+	double plan_master_strategy_engine (pframes_t nframes, double master_speed, samplepos_t master_transport_sample, double catch_speed);
+	bool implement_master_strategy ();
+
 	bool follow_transport_master (pframes_t nframes);
 
 	void sync_source_changed (SyncSource, samplepos_t pos, pframes_t cycle_nframes);
-	void reset_slave_state ();
 
 	bool post_export_sync;
 	samplepos_t post_export_position;
@@ -1338,7 +1421,7 @@ private:
 
 	int  pre_export ();
 	int  stop_audio_export ();
-	void finalize_audio_export ();
+	void finalize_audio_export (TransportRequestSource trs);
 	void finalize_export_internal (bool stop_freewheel);
 	bool _pre_export_mmc_enabled;
 
@@ -1370,7 +1453,7 @@ private:
 	boost::scoped_ptr<SessionDirectory> _session_dir;
 
 	void hookup_io ();
-	void graph_reordered ();
+	void graph_reordered (bool called_from_backend);
 
 	/** current snapshot name, without the .ardour suffix */
 	void set_snapshot_name (const std::string &);
@@ -1384,12 +1467,14 @@ private:
 	friend class    StateProtector;
 	gint            _suspend_save; /* atomic */
 	volatile bool   _save_queued;
+	volatile bool   _save_queued_pending;
+
 	Glib::Threads::Mutex save_state_lock;
 	Glib::Threads::Mutex save_source_lock;
 	Glib::Threads::Mutex peak_cleanup_lock;
 
 	int        load_options (const XMLNode&);
-	int        load_state (std::string snapshot_name);
+	int        load_state (std::string snapshot_name, bool from_template = false);
 	static int parse_stateful_loading_version (const std::string&);
 
 	samplepos_t _last_roll_location;
@@ -1417,12 +1502,9 @@ private:
 
 	Butler* _butler;
 
-	static const PostTransportWork ProcessCannotProceedMask =
-		PostTransportWork (
-			PostTransportReverse|
-			PostTransportAudition|
-			PostTransportStop|
-			PostTransportClearSubstate);
+	TransportFSM* _transport_fsm;
+
+	static const PostTransportWork ProcessCannotProceedMask = PostTransportWork (PostTransportAudition| PostTransportClearSubstate);
 
 	gint _post_transport_work; /* accessed only atomic ops */
 	PostTransportWork post_transport_work() const        { return (PostTransportWork) g_atomic_int_get (const_cast<gint*>(&_post_transport_work)); }
@@ -1454,9 +1536,7 @@ private:
 
 	PBD::ScopedConnectionList loop_connections;
 	void             auto_loop_changed (Location *);
-	void             auto_loop_declick_range (Location *, samplepos_t &, samplepos_t &);
 
-	int  ensure_engine (uint32_t desired_sample_rate, bool);
 	void pre_engine_init (std::string path);
 	int  post_engine_init ();
 	int  immediately_post_engine ();
@@ -1651,29 +1731,39 @@ private:
 
 	int           start_midi_thread ();
 
-	bool should_ignore_transport_request (TransportRequestSource, TransportRequestType) const;
-	bool declick_in_progress () const;
+	bool should_ignore_transport_request (TransportRequestSource, TransportRequestType);
 
-	void set_play_loop (bool yn, double speed);
-	void unset_play_loop ();
-	void overwrite_some_buffers (Track *);
+	void set_play_loop (bool yn, bool change_transport_state);
+	void unset_play_loop (bool change_transport_state = false);
+	void overwrite_some_buffers (boost::shared_ptr<Route>, OverwriteReason);
 	void flush_all_inserts ();
 	int  micro_locate (samplecnt_t distance);
-	void locate (samplepos_t, bool with_roll, bool with_flush, bool with_loop=false, bool force=false, bool with_mmc=true);
-	void start_locate (samplepos_t, bool with_roll, bool with_flush, bool for_loop_enabled=false, bool force=false);
-	void force_locate (samplepos_t sample, bool with_roll = false);
-	void set_transport_speed (double speed, samplepos_t destination_sample, bool abort = false, bool clear_state = false, bool as_default = false);
-	void stop_transport (bool abort = false, bool clear_state = false);
-	void start_transport ();
+
+	enum PunchLoopLock {
+		NoConstraint,
+		OnlyPunch,
+		OnlyLoop,
+	};
+
+	volatile guint _punch_or_loop; // enum PunchLoopLock
+	gint current_usecs_per_track;
+
+	bool punch_active () const;
+	void unset_punch ();
+	void reset_punch_loop_constraint ();
+	bool maybe_allow_only_loop (bool play_loop = false);
+	bool maybe_allow_only_punch ();
+
+	void force_locate (samplepos_t sample, LocateTransportDisposition);
 	void realtime_stop (bool abort, bool clear_state);
-	void realtime_locate ();
+	void realtime_locate (bool);
 	void non_realtime_start_scrub ();
 	void non_realtime_set_speed ();
 	void non_realtime_locate ();
 	void non_realtime_stop (bool abort, int entry_request_count, bool& finished);
 	void non_realtime_overwrite (int entry_request_count, bool& finished);
-	void post_transport ();
 	void engine_halted ();
+	void engine_running ();
 	void xrun_recovery ();
 	void set_track_loop (bool);
 	bool select_playhead_priority_target (samplepos_t&);
@@ -1707,8 +1797,6 @@ private:
 	bool _adding_routes_in_progress;
 	bool _reconnecting_routes_in_progress;
 	bool _route_deletion_in_progress;
-
-	uint32_t destructive_index;
 
 	boost::shared_ptr<Route> XMLRouteFactory (const XMLNode&, int);
 	boost::shared_ptr<Route> XMLRouteFactory_2X (const XMLNode&, int);
@@ -1754,7 +1842,21 @@ private:
 	mutable Glib::Threads::Mutex source_lock;
 
 public:
+
+	/* Emited when a new source is added to the session */
+	PBD::Signal1< void, boost::weak_ptr<Source> > SourceAdded;
+	PBD::Signal1< void, boost::weak_ptr<Source> > SourceRemoved;
+
 	typedef std::map<PBD::ID,boost::shared_ptr<Source> > SourceMap;
+
+	void foreach_source (boost::function<void( boost::shared_ptr<Source> )> f) {
+		Glib::Threads::Mutex::Lock ls (source_lock);
+		for (SourceMap::iterator i = sources.begin(); i != sources.end(); ++i) {
+			f ( (*i).second );
+		}
+	}
+
+	bool playlist_is_active( boost::shared_ptr<Playlist>);
 
 private:
 	void reset_write_sources (bool mark_write_complete, bool force = false);
@@ -1775,6 +1877,9 @@ private:
 
 	/* CURVES and AUTOMATION LISTS */
 	std::map<PBD::ID, AutomationList*> automation_lists;
+
+	/** load 2.X Sessions. Diskstream-ID to playlist-name mapping */
+	std::map<PBD::ID, std::string> _diskstreams_2X;
 
 	/* DEFAULT FADE CURVES */
 
@@ -1951,7 +2056,7 @@ private:
 	static bool _disable_all_loaded_plugins;
 	static bool _bypass_all_loaded_plugins;
 
-	mutable bool have_looped; ///< Used in ::audible_sample(*)
+	mutable bool have_looped; ///< Used in \ref audible_sample
 
 	void update_route_record_state ();
 	gint _have_rec_enabled_track;
@@ -1996,8 +2101,6 @@ private:
 	void rt_set_controls (boost::shared_ptr<ControlList>, double val, PBD::Controllable::GroupControlDisposition group_override);
 	void rt_clear_all_solo_state (boost::shared_ptr<RouteList>, bool yn, PBD::Controllable::GroupControlDisposition group_override);
 
-	void set_session_range_location (samplepos_t, samplepos_t);
-
 	void setup_midi_machine_control ();
 
 	void step_edit_status_change (bool);
@@ -2026,6 +2129,7 @@ private:
 
 	friend class    ProcessorChangeBlocker;
 	gint            _ignore_route_processor_changes; /* atomic */
+	gint            _ignored_a_processor_change;
 
 	MidiClockTicker* midi_clock;
 
@@ -2067,6 +2171,11 @@ private:
 	CoreSelection* _selection;
 
 	bool _global_locate_pending;
+	boost::optional<samplepos_t> _nominal_jack_transport_sample;
+
+	bool _had_destructive_tracks;
+
+	std::string unnamed_file_name () const;
 };
 
 

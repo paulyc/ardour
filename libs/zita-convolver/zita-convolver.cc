@@ -621,7 +621,7 @@ Convlevel::start (int abspri, int policy)
 	pthread_attr_setschedparam (&attr, &parm);
 	pthread_attr_setscope (&attr, PTHREAD_SCOPE_SYSTEM);
 	pthread_attr_setinheritsched (&attr, PTHREAD_EXPLICIT_SCHED);
-	pthread_attr_setstacksize (&attr, 0x10000);
+	pthread_attr_setstacksize (&attr, 0x10000); // 64kB
 	pthread_create (&_pthr, &attr, static_main, this);
 	pthread_attr_destroy (&attr);
 }
@@ -680,6 +680,9 @@ void*
 Convlevel::static_main (void* arg)
 {
 	((Convlevel*)arg)->main ();
+#if !defined PTW32_VERSION && defined _GNU_SOURCE
+	pthread_setname_np (pthread_self(), "ZConvlevel");
+#endif
 	return 0;
 }
 

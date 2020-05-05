@@ -1,21 +1,21 @@
 /*
-    Copyright (C) 2000-2016 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2016-2017 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2016-2019 Paul Davis <paul@linuxaudiosystems.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <cmath>
 #include <errno.h>
@@ -281,17 +281,9 @@ struct NamedColor {
 	NamedColor (string s, Gtkmm2ext::HSV c) : name (s), color (c) {}
 };
 
-struct SortByHue {
+struct SortNamedColor {
 	bool operator() (NamedColor const & a, NamedColor const & b) {
-		using namespace ArdourCanvas;
-		const HSV black (0, 0, 0);
-		if (a.color.is_gray() || b.color.is_gray()) {
-			return black.distance (a.color) < black.distance (b.color);
-		} else {
-			return a.color.h < b.color.h;
-			// const HSV red (rgba_to_color (1.0, 0.0, 0.0, 1.0));
-			// return red.distance (a.color) < red.distance (b.color);
-		}
+		return a.name < b.name;
 	}
 };
 
@@ -308,7 +300,7 @@ ColorThemeManager::build_palette_canvas (ArdourCanvas::Canvas& canvas, ArdourCan
 	for (UIConfiguration::Colors::const_iterator x = colors.begin(); x != colors.end(); ++x) {
 		nc.push_back (NamedColor (x->first, HSV (x->second)));
 	}
-	SortByHue sorter;
+	SortNamedColor sorter;
 	sort (nc.begin(), nc.end(), sorter);
 
 	const uint32_t color_limit = nc.size();

@@ -1,27 +1,29 @@
 /*
-    Copyright (C) 2007 Paul Davis
-    Author: David Robillard
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2013-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2015 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2016 Nick Mainsbridge <mainsbridge@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <iostream>
 
 #include "gtkmm2ext/keyboard.h"
 
-#include "evoral/Note.hpp"
+#include "evoral/Note.h"
 
 #include "canvas/text.h"
 
@@ -66,7 +68,7 @@ NoteBase::NoteBase(MidiRegionView& region, bool with_events, const boost::shared
 	, _state(None)
 	, _note(note)
 	, _with_events (with_events)
-	, _selected(false)
+	, _flags (Flags (0))
 	, _valid (true)
 	, _mouse_x_fraction (-1.0)
 	, _mouse_y_fraction (-1.0)
@@ -140,10 +142,10 @@ NoteBase::on_channel_selection_change(uint16_t selection)
 	if ( (selection & (1 << _note->channel())) == 0 ) {
 		const Gtkmm2ext::Color inactive_ch = UIConfiguration::instance().color ("midi note inactive channel");
 		set_fill_color(inactive_ch);
-		set_outline_color(calculate_outline(inactive_ch, _selected));
+		set_outline_color(calculate_outline(inactive_ch, (_flags == Selected)));
 	} else {
 		// set the color according to the notes selection state
-		set_selected(_selected);
+		set_selected (_flags == Selected);
 	}
 	// this forces the item to update..... maybe slow...
 	_item->hide();
@@ -164,12 +166,16 @@ NoteBase::set_selected(bool selected)
 		return;
 	}
 
-	_selected = selected;
+	if (selected) {
+		_flags = Flags (_flags | Selected);
+	} else {
+		_flags = Flags (_flags & ~Selected);
+	}
 
 	const uint32_t base_col = base_color();
 	set_fill_color (base_col);
 
-	set_outline_color(calculate_outline(base_col, _selected));
+	set_outline_color(calculate_outline(base_col, (_flags == Selected)));
 }
 
 #define SCALE_USHORT_TO_UINT8_T(x) ((x) / 257)
@@ -362,3 +368,21 @@ NoteBase::meter_style_fill_color(uint8_t vel, bool /* selected */)
 	return velocity_color_table[vel];
 }
 
+void
+NoteBase::set_hide_selection (bool yn)
+{
+	if (yn) {
+		_flags = Flags (_flags | HideSelection);
+	} else {
+		_flags = Flags (_flags & ~HideSelection);
+	}
+
+	if (_flags & Selected) {
+		/* maybe (?) change outline color */
+		set_outline_color (calculate_outline (base_color(), !yn));
+	}
+
+	/* no need to redo color if it wasn't selected and we just changed
+	 * "hide selected" since nothing will change
+	 */
+}

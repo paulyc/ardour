@@ -1,21 +1,23 @@
 /*
-    Copyright (C) 2010 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2010-2015 David Robillard <d@drobilla.net>
+ * Copyright (C) 2010-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2012-2015 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2012-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <iostream>
 
@@ -47,18 +49,6 @@ using namespace ArdourWidgets;
 
 Gtkmm2ext::Bindings* StepEntry::bindings = 0;
 StepEntry* StepEntry::_instance = 0;
-
-static void
-_note_off_event_handler (GtkWidget* /*widget*/, int note, gpointer arg)
-{
-	((StepEntry*)arg)->note_off_event_handler (note);
-}
-
-static void
-_rest_event_handler (GtkWidget* /*widget*/, gpointer arg)
-{
-	((StepEntry*)arg)->rest_event_handler ();
-}
 
 StepEntry&
 StepEntry::instance()
@@ -97,8 +87,6 @@ StepEntry::StepEntry ()
 	, program_adjustment (0, 0.0, 127.0, 1.0, 4.0)
 	, program_spinner (program_adjustment)
 	, program_button (_("+"))
-	, _piano (0)
-	, piano (0)
 	, se (0)
 {
 	set_data ("ardour-bindings", bindings);
@@ -434,13 +422,10 @@ StepEntry::StepEntry ()
 	length_divisor_adjustment.signal_value_changed().connect (sigc::mem_fun (*this, &StepEntry::length_value_change));
 	dot_adjustment.signal_value_changed().connect (sigc::mem_fun (*this, &StepEntry::dot_value_change));
 
-	_piano = (PianoKeyboard*) piano_keyboard_new ();
-	piano = wrap ((GtkWidget*) _piano);
+	_piano.set_flags (Gtk::CAN_FOCUS);
 
-	piano->set_flags (Gtk::CAN_FOCUS);
-
-	g_signal_connect(G_OBJECT(_piano), "note-off", G_CALLBACK(_note_off_event_handler), this);
-	g_signal_connect(G_OBJECT(_piano), "rest", G_CALLBACK(_rest_event_handler), this);
+	_piano.NoteOff.connect (sigc::mem_fun (*this, &StepEntry::note_off_event_handler));
+	_piano.Rest.connect (sigc::mem_fun (*this, &StepEntry::rest_event_handler));
 
 	program_button.signal_clicked().connect (sigc::mem_fun (*this, &StepEntry::program_click));
 	bank_button.signal_clicked().connect (sigc::mem_fun (*this, &StepEntry::bank_click));
@@ -451,7 +436,7 @@ StepEntry::StepEntry ()
 
 	packer.set_spacing (6);
 	packer.pack_start (upper_box, false, false);
-	packer.pack_start (*piano, false, false);
+	packer.pack_start (_piano, false, false);
 	packer.show_all ();
 
 	add (packer);
@@ -590,7 +575,7 @@ void
 StepEntry::on_show ()
 {
 	ArdourWindow::on_show ();
-	//piano->grab_focus ();
+	//_piano->grab_focus ();
 }
 
 void

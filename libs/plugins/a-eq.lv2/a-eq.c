@@ -1,15 +1,20 @@
-/* a-eq
- * Copyright (C) 2016 Damien Zammit <damien@zamaudio.com>
+/*
+ * Copyright (C) 2016-2017 Damien Zammit <damien@zamaudio.com>
+ * Copyright (C) 2016 Robin Gareus <robin@gareus.org>
  *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 #ifndef _GNU_SOURCE
@@ -144,7 +149,7 @@ instantiate(const LV2_Descriptor* descriptor,
 {
 	Aeq* aeq = (Aeq*)calloc(1, sizeof(Aeq));
 	aeq->srate = rate;
-	aeq->tau = 1.0 - expf (-2.f * M_PI * 64.f * 25.f / aeq->srate); // 25Hz time constant @ 64fpp
+	aeq->tau = 1.f - expf (-2.f * M_PI * 64.f * 25.f / aeq->srate); // 25Hz time constant @ 64fpp
 
 #ifdef LV2_EXTENDED
 	for (int i=0; features[i]; ++i) {

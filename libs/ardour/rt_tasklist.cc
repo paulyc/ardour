@@ -1,19 +1,19 @@
 /*
- * Copyright (C) 2017 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2017-2018 Robin Gareus <robin@gareus.org>
  *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 
@@ -51,8 +51,7 @@ RTTaskList::drop_threads ()
 	for (uint32_t i = 0; i < nt; ++i) {
 		_task_run_sem.signal ();
 	}
-	for (std::vector<pthread_t>::const_iterator i = _threads.begin (); i != _threads.end (); ++i)
-	{
+	for (std::vector<pthread_t>::const_iterator i = _threads.begin (); i != _threads.end (); ++i) {
 		pthread_join (*i, NULL);
 	}
 	_threads.clear ();
@@ -64,6 +63,7 @@ RTTaskList::drop_threads ()
 RTTaskList::_thread_run (void *arg)
 {
 	RTTaskList *d = static_cast<RTTaskList *>(arg);
+	pthread_set_name ("RTTaskList");
 	d->run ();
 	pthread_exit (0);
 	return 0;
@@ -84,13 +84,12 @@ RTTaskList::reset_thread_list ()
 	g_atomic_int_set (&_threads_active, 1);
 	for (uint32_t i = 0; i < num_threads; ++i) {
 		pthread_t thread_id;
-		size_t stacksize = 100000;
 		if (!AudioEngine::instance()->is_realtime ()
 		    ||
-		    pbd_realtime_pthread_create (PBD_SCHED_FIFO, AudioEngine::instance()->client_real_time_priority(), stacksize, &thread_id, _thread_run, this)) {
+		    pbd_realtime_pthread_create (PBD_SCHED_FIFO, AudioEngine::instance()->client_real_time_priority(), PBD_RT_STACKSIZE_HELP, &thread_id, _thread_run, this)) {
 			pthread_attr_t attr;
 			pthread_attr_init (&attr);
-			pthread_attr_setstacksize (&attr, stacksize);
+			pthread_attr_setstacksize (&attr, PBD_RT_STACKSIZE_HELP);
 			if (pthread_create (&thread_id, &attr, _thread_run, this)) {
 				PBD::fatal << _("Cannot create thread for TaskList!") << endmsg;
 				/* NOT REACHED */
@@ -122,7 +121,7 @@ RTTaskList::run ()
 
 		boost::function<void ()> to_run;
 		tm.acquire ();
-		if (_tasklist.size () > 0) {
+		if (!_tasklist.empty ()) {
 			to_run = _tasklist.front();
 			_tasklist.pop_front ();
 		}
@@ -145,20 +144,29 @@ void
 RTTaskList::process (TaskList const& tl)
 {
 	Glib::Threads::Mutex::Lock pm (_process_mutex);
+	Glib::Threads::Mutex::Lock tm (_tasklist_mutex, Glib::Threads::NOT_LOCK);
+
+	tm.acquire ();
 	_tasklist = tl;
+	tm.release ();
+
 	process_tasklist ();
+
+	tm.acquire ();
 	_tasklist.clear ();
+	tm.release ();
 }
 
 void
 RTTaskList::process_tasklist ()
 {
-	if (0 == g_atomic_int_get (&_threads_active) || _threads.size () == 0) {
+//	if (0 == g_atomic_int_get (&_threads_active) || _threads.size () == 0) {
+
 		for (TaskList::iterator i = _tasklist.begin (); i != _tasklist.end(); ++i) {
 			(*i)();
 		}
 		return;
-	}
+//	}
 
 	uint32_t nt = std::min (_threads.size (), _tasklist.size ());
 

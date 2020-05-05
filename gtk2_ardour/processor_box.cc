@@ -1,21 +1,29 @@
 /*
-    Copyright (C) 2000-2004 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2007-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2007 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2008-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2013-2015 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2014-2015 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2014-2016 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2017 Johannes Mueller <github@johannes-mueller.org>
+ * Copyright (C) 2018 Len Ovens <len@ovenwerks.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifdef WAF_BUILD
 #include "gtk2ardour-config.h"
@@ -31,6 +39,8 @@
 #include <glibmm/fileutils.h>
 
 #include <gtkmm/messagedialog.h>
+
+#include "pbd/unwind.h"
 
 #include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/gtk_ui.h"
@@ -106,6 +116,8 @@ using namespace Gtkmm2ext;
 using namespace ArdourWidgets;
 
 ProcessorBox*  ProcessorBox::_current_processor_box = 0;
+bool           ProcessorBox::_ignore_disk_io_change = false;
+
 RefPtr<Action> ProcessorBox::paste_action;
 RefPtr<Action> ProcessorBox::cut_action;
 RefPtr<Action> ProcessorBox::copy_action;
@@ -234,7 +246,7 @@ ProcessorEntry::ProcessorEntry (ProcessorBox* parent, boost::shared_ptr<Processo
 				label = _("Return");
 			}
 
-			Control* c = new Control (_processor->automation_control (*i), label);
+			Control* c = new Control (*this, _processor->automation_control (*i), label);
 
 			_controls.push_back (c);
 
@@ -337,6 +349,7 @@ ProcessorEntry::drag_data_get (Glib::RefPtr<Gdk::DragContext> const, Gtk::Select
 		_plugin_preset_pointer->_preset.valid = false;
 
 		switch (d.run ()) {
+			default:
 			case Gtk::RESPONSE_CANCEL:
 				data.set (data.get_target(), 8, NULL, 0);
 				return true;
@@ -400,13 +413,13 @@ ProcessorEntry::setup_visuals ()
 			_button.set_name ("processor sidechain");
 			return;
 		}
-	}
 
-	boost::shared_ptr<InternalSend> aux;
-	if ((aux = boost::dynamic_pointer_cast<InternalSend> (_processor))) {
-		if (aux->allow_feedback ()) {
-			_button.set_name ("processor auxfeedback");
-			return;
+		boost::shared_ptr<InternalSend> aux;
+		if ((aux = boost::dynamic_pointer_cast<InternalSend> (_processor))) {
+			if (aux->allow_feedback ()) {
+				_button.set_name ("processor auxfeedback");
+				return;
+			}
 		}
 	}
 
@@ -426,7 +439,6 @@ ProcessorEntry::setup_visuals ()
 		break;
 	}
 }
-
 
 boost::shared_ptr<Processor>
 ProcessorEntry::processor () const
@@ -496,6 +508,11 @@ ProcessorEntry::processor_property_changed (const PropertyChange& what_changed)
 	if (what_changed.contains (ARDOUR::Properties::name)) {
 		_button.set_text (name (_width));
 		setup_tooltip ();
+	} else if (boost::dynamic_pointer_cast<Send> (_processor) != 0) {
+		/* Any property change for a send needs to trigger an update.
+		 * e.g. target-bus is updated, panner-link changes, etc */
+		_button.set_text (name (_width));
+		setup_tooltip ();
 	}
 }
 
@@ -541,12 +558,26 @@ ProcessorEntry::setup_tooltip ()
 			return;
 		}
 		boost::shared_ptr<Send> send;
-		if ((send = boost::dynamic_pointer_cast<Send> (_processor)) != 0 &&
-				!boost::dynamic_pointer_cast<InternalSend>(_processor)) {
-			if (send->remove_on_disconnect ()) {
-				set_tooltip (_button, string_compose ("<b>&gt; %1</b>\nThis (sidechain) send will be removed when disconnected.", _processor->name()));
+		if ((send = boost::dynamic_pointer_cast<Send> (_processor)) != 0) {
+			std::string pan_suffix;
+			if (send->has_panner ()) {
+				bool panlinked = send->panner_linked_to_route();
+				pan_suffix = panlinked ? "\n(Send panner is linked)" : "\n(Send has independent panner)";
+			}
+
+			boost::shared_ptr<InternalSend> aux;
+			if ((aux = boost::dynamic_pointer_cast<InternalSend> (_processor)) != 0) {
+				if (aux->target_route() && aux->target_route()->name() != aux->display_name())  {
+					set_tooltip (_button, string_compose ("<b>Aux: %1</b>\nsend to '%2'%3", aux->display_name(), aux->target_route()->name(), pan_suffix));
+				} else {
+					set_tooltip (_button, string_compose ("<b>Aux: %1</b>%2", aux->display_name(), pan_suffix));
+				}
 			} else {
-				set_tooltip (_button, string_compose ("<b>&gt; %1</b>", _processor->name()));
+				if (send->remove_on_disconnect ()) {
+					set_tooltip (_button, string_compose ("<b>&gt; %1</b>\nThis (sidechain) send will be removed when disconnected.%2", _processor->name(), pan_suffix));
+				} else {
+					set_tooltip (_button, string_compose ("<b>&gt; %1</b>%2", _processor->name(), pan_suffix));
+				}
 			}
 			return;
 		}
@@ -557,16 +588,37 @@ ProcessorEntry::setup_tooltip ()
 string
 ProcessorEntry::name (Width w) const
 {
-	boost::shared_ptr<Send> send;
-	string name_display;
-
 	if (!_processor) {
 		return string();
 	}
 
-	if ((send = boost::dynamic_pointer_cast<Send> (_processor)) != 0 &&
-	    !boost::dynamic_pointer_cast<InternalSend>(_processor)) {
+	string name_display;
 
+	boost::shared_ptr<Send> send;
+	boost::shared_ptr<InternalSend> aux;
+
+	if ((aux = boost::dynamic_pointer_cast<InternalSend> (_processor)) != 0) {
+
+		if (aux->has_panner () && !aux->panner_linked_to_route()) {
+			switch (w) {
+				case Wide:
+					name_display += "^ ";
+					break;
+				case Narrow:
+					name_display += "^";
+					break;
+			}
+		}
+		switch (w) {
+			case Wide:
+				name_display += aux->display_name();
+				break;
+			case Narrow:
+				name_display += PBD::short_version (aux->display_name(), 5);
+				break;
+		}
+
+	} else if ((send = boost::dynamic_pointer_cast<Send> (_processor)) != 0) {
 		name_display += '>';
 		std::string send_name;
 		bool pretty_ok = true;
@@ -785,14 +837,12 @@ ProcessorEntry::build_send_options_menu ()
 	Menu* menu = manage (new Menu);
 	MenuList& items = menu->items ();
 
-	if (!ARDOUR::Profile->get_mixbus()) {
-		boost::shared_ptr<Send> send = boost::dynamic_pointer_cast<Send> (_processor);
-		if (send) {
-			items.push_back (CheckMenuElem (_("Link panner controls")));
-			Gtk::CheckMenuItem* c = dynamic_cast<Gtk::CheckMenuItem*> (&items.back ());
-			c->set_active (send->panner_shell()->is_linked_to_route());
-			c->signal_toggled().connect (sigc::mem_fun (*this, &ProcessorEntry::toggle_panner_link));
-		}
+	boost::shared_ptr<Send> send = boost::dynamic_pointer_cast<Send> (_processor);
+	if (send) {
+		items.push_back (CheckMenuElem (_("Link panner controls")));
+		Gtk::CheckMenuItem* c = dynamic_cast<Gtk::CheckMenuItem*> (&items.back ());
+		c->set_active (send->panner_linked_to_route ());
+		c->signal_toggled().connect (sigc::mem_fun (*this, &ProcessorEntry::toggle_panner_link));
 	}
 
 	boost::shared_ptr<InternalSend> aux = boost::dynamic_pointer_cast<InternalSend> (_processor);
@@ -810,7 +860,7 @@ ProcessorEntry::toggle_panner_link ()
 {
 	boost::shared_ptr<Send> send = boost::dynamic_pointer_cast<Send> (_processor);
 	if (send) {
-		send->panner_shell()->set_linked_to_route(!send->panner_shell()->is_linked_to_route());
+		send->set_panner_linked_to_route (!send->panner_linked_to_route ());
 	}
 }
 
@@ -823,8 +873,9 @@ ProcessorEntry::toggle_allow_feedback ()
 	}
 }
 
-ProcessorEntry::Control::Control (boost::shared_ptr<AutomationControl> c, string const & n)
-	: _control (c)
+ProcessorEntry::Control::Control (ProcessorEntry& e,boost::shared_ptr<AutomationControl> c, string const & n)
+	: _entry (e)
+	, _control (c)
 	, _adjustment (gain_to_slider_position_with_max (1.0, Config->get_max_gain()), 0, 1, 0.01, 0.1)
 	, _slider (&_adjustment, boost::shared_ptr<PBD::Controllable>(), 0, max(13.f, rintf(13.f * UIConfiguration::instance().get_ui_scale())))
 	, _slider_persistant_tooltip (&_slider)
@@ -851,6 +902,9 @@ ProcessorEntry::Control::Control (boost::shared_ptr<AutomationControl> c, string
 			control_automation_state_changed ();
 		}
 
+		_button.set_fallthrough_to_parent (true);
+		_button.signal_button_release_event().connect (sigc::mem_fun(*this, &Control::button_released));
+
 	} else {
 
 		_slider.set_name ("ProcessorControlSlider");
@@ -874,6 +928,8 @@ ProcessorEntry::Control::Control (boost::shared_ptr<AutomationControl> c, string
 
 		_slider.StartGesture.connect(sigc::mem_fun(*this, &Control::start_touch));
 		_slider.StopGesture.connect(sigc::mem_fun(*this, &Control::end_touch));
+
+		_slider.signal_button_release_event().connect (sigc::mem_fun(*this, &Control::button_released));
 
 		_adjustment.signal_value_changed().connect (sigc::mem_fun (*this, &Control::slider_adjusted));
 		c->Changed.connect (_connections, invalidator (*this), boost::bind (&Control::control_changed, this), gui_context ());
@@ -943,6 +999,16 @@ ProcessorEntry::Control::end_touch ()
 		return;
 	}
 	c->stop_touch (c->session().transport_sample());
+}
+
+bool
+ProcessorEntry::Control::button_released (GdkEventButton* ev)
+{
+	if (Keyboard::is_delete_event (ev)) {
+		_entry.toggle_control_visibility (this);
+		return true;
+	}
+	return false;
 }
 
 void
@@ -1027,7 +1093,8 @@ ProcessorEntry::Control::set_state (XMLNode const * node)
 			set_visible (visible);
 		}
 	} else {
-		set_visible (false);
+		boost::shared_ptr<AutomationControl> c = _control.lock ();
+		set_visible (c && (c->flags () & Controllable::InlineControl));
 	}
 }
 
@@ -1712,6 +1779,7 @@ ProcessorEntry::LuaPluginDisplay::render_inline (cairo_t *cr, uint32_t width)
 #ifndef NDEBUG
 		cerr << "LuaException:" << e.what () << endl;
 #endif
+		PBD::warning << "LuaException: " << e.what () << endmsg;
 	} catch (...) { }
 	return 0;
 }
@@ -1971,7 +2039,10 @@ ProcessorBox::object_drop (DnDVBox<ProcessorEntry>* source, ProcessorEntry* posi
 		 * (this needs a better solution which retains connections)
 		 */
 		state.remove_nodes_and_delete ("Processor");
+		/* Controllable and automation IDs should not be copied */
+		PBD::Stateful::ForceIDRegeneration force_ids;
 		proc->set_state (state, Stateful::loading_state_version);
+		/* but retain the processor's ID (LV2 state save) */
 		boost::dynamic_pointer_cast<PluginInsert>(proc)->update_id (id);
 		return;
 	}
@@ -2039,7 +2110,7 @@ ProcessorBox::build_possible_aux_menu ()
 		return 0;
 	}
 
-	if (_route->is_monitor () || _route->is_foldbackbus ()) {
+	if (_route->is_monitor () || _route->is_foldbackbus () || _route->is_master ()) {
 		return 0;
 	}
 
@@ -2267,6 +2338,10 @@ ProcessorBox::show_processor_menu (int arg)
 	manage_pins_action->set_sensitive (pi != 0);
 	if (boost::dynamic_pointer_cast<Track>(_route)) {
 		disk_io_action->set_sensitive (true);
+		PBD::Unwinder<bool> uw (_ignore_disk_io_change, true);
+		ActionManager::get_toggle_action (X_("ProcessorMenu"), "disk-io-prefader")->set_active (_route->disk_io_point () == DiskIOPreFader);
+		ActionManager::get_toggle_action (X_("ProcessorMenu"), "disk-io-postfader")->set_active (_route->disk_io_point () == DiskIOPostFader);
+		ActionManager::get_toggle_action (X_("ProcessorMenu"), "disk-io-custom")->set_active (_route->disk_io_point () == DiskIOCustom);
 	} else {
 		disk_io_action->set_sensitive (false);
 	}
@@ -2888,29 +2963,15 @@ ProcessorBox::add_processor_to_display (boost::weak_ptr<Processor> p)
 	boost::shared_ptr<UnknownProcessor> stub = boost::dynamic_pointer_cast<UnknownProcessor> (processor);
 
 	//faders and meters are not deletable, copy/paste-able, so they shouldn't be selectable
-	if (!send && !plugin_insert && !ext && !stub)
+	if (!send && !plugin_insert && !ext && !stub) {
 		e->set_selectable(false);
-
-	bool mark_send_visible = false;
-	if (send && _parent_strip) {
-		/* show controls of new sends by default */
-		GUIObjectState& st = _parent_strip->gui_object_state ();
-		XMLNode* strip = st.get_or_add_node (_parent_strip->state_id ());
-		assert (strip);
-		/* check if state exists, if not it must be a new send */
-		if (!st.get_node(strip, e->state_id())) {
-			mark_send_visible = true;
-		}
 	}
 
 	/* Set up this entry's state from the GUIObjectState */
 	XMLNode* proc = entry_gui_object_state (e);
 	if (proc) {
 		e->set_control_state (proc);
-	}
-
-	if (mark_send_visible) {
-		e->show_all_controls ();
+		update_gui_object_state (e); /* save updated state (InlineControl) */
 	}
 
 	if (plugin_insert
@@ -3330,7 +3391,7 @@ ProcessorBox::rename_processor (boost::shared_ptr<Processor> processor)
 
 	case Gtk::RESPONSE_ACCEPT:
 		name_prompter.get_result (result);
-		if (result.length()) {
+		if (result.length() && result != processor->name ()) {
 
 			int tries = 0;
 			string test = result;
@@ -3417,16 +3478,27 @@ ProcessorBox::paste_processor_state (const XMLNodeList& nlist, boost::shared_ptr
 					continue;
 				}
 
+				/* compare to ProcessorBox::build_possible_aux_menu */
+				if (_route->is_monitor () || _route->is_foldbackbus () || _route->is_master ()) {
+					continue;
+				}
+
 				boost::shared_ptr<Pannable> sendpan(new Pannable (*_session));
 				XMLNode n (**niter);
 				InternalSend* s = new InternalSend (*_session, sendpan, _route->mute_master(),
 						_route, boost::shared_ptr<Route>(), Delivery::Aux);
 
-				IOProcessor::prepare_for_reset (n, s->name());
-
 				if (s->set_state (n, Stateful::loading_state_version)) {
 					delete s;
 					return;
+				}
+
+				boost::shared_ptr<Route> target = s->target_route();
+
+				if (_route->internal_send_for (target) || target == _route) {
+					/* aux-send to target already exists */
+					delete s;
+					continue;
 				}
 
 				p.reset (s);
@@ -3488,12 +3560,14 @@ ProcessorBox::paste_processor_state (const XMLNodeList& nlist, boost::shared_ptr
 				/* strip side-chain state (processor inside processor must be a side-chain)
 				 * otherwise we'll end up with duplicate ports-names.
 				 * (this needs a better solution which retains connections)
-				 * We really would want Stateful::ForceIDRegeneration here :(
 				 */
 				XMLNode state (**niter);
 				state.remove_nodes_and_delete ("Processor");
 
+				/* Controllable and automation IDs should not be copied */
+				PBD::Stateful::ForceIDRegeneration force_ids;
 				p->set_state (state, Stateful::current_state_version);
+				/* but retain the processor's ID (LV2 state save) */
 				boost::dynamic_pointer_cast<PluginInsert>(p)->update_id (id);
 			}
 
@@ -3794,8 +3868,8 @@ ProcessorBox::register_actions ()
 	ActionManager::engine_sensitive_actions.push_back (act);
 
 	ActionManager::register_action (processor_box_actions, X_("newaux"), _("New Aux Send ..."));
-	ActionManager::register_action (processor_box_actions, X_("newlisten"), _("New Monitor Send ..."));
-	ActionManager::register_action (processor_box_actions, X_("removelisten"), _("Remove Monitor Send ..."));
+	ActionManager::register_action (processor_box_actions, X_("newlisten"), _("New Foldback Send ..."));
+	ActionManager::register_action (processor_box_actions, X_("removelisten"), _("Remove Foldback Send ..."));
 
 	ActionManager::register_action (processor_box_actions, X_("controls"), _("Controls"));
 	ActionManager::register_action (processor_box_actions, X_("send_options"), _("Send Options"));
@@ -3847,9 +3921,9 @@ ProcessorBox::register_actions ()
 
 	/* Disk IO stuff */
 	disk_io_action = ActionManager::register_action (processor_box_actions, X_("disk-io-menu"), _("Disk I/O ..."));
-	ActionManager::register_action (processor_box_actions, X_("disk-io-prefader"), _("Pre-Fader."), sigc::bind (sigc::ptr_fun (ProcessorBox::rb_set_disk_io_position), DiskIOPreFader));
-	ActionManager::register_action (processor_box_actions, X_("disk-io-postfader"), _("Post-Fader."), sigc::bind (sigc::ptr_fun (ProcessorBox::rb_set_disk_io_position), DiskIOPostFader));
-	ActionManager::register_action (processor_box_actions, X_("disk-io-custom"), _("Custom."), sigc::bind (sigc::ptr_fun (ProcessorBox::rb_set_disk_io_position), DiskIOCustom));
+	ActionManager::register_toggle_action (processor_box_actions, X_("disk-io-prefader"), _("Pre-Fader"), sigc::bind (sigc::ptr_fun (ProcessorBox::rb_set_disk_io_position), DiskIOPreFader));
+	ActionManager::register_toggle_action (processor_box_actions, X_("disk-io-postfader"), _("Post-Fader"), sigc::bind (sigc::ptr_fun (ProcessorBox::rb_set_disk_io_position), DiskIOPostFader));
+	ActionManager::register_toggle_action (processor_box_actions, X_("disk-io-custom"), _("Custom"), sigc::bind (sigc::ptr_fun (ProcessorBox::rb_set_disk_io_position), DiskIOCustom));
 
 	/* show editors */
 	edit_action = ActionManager::register_action (
@@ -3886,6 +3960,9 @@ void
 ProcessorBox::rb_set_disk_io_position (DiskIOPoint diop)
 {
 	if (_current_processor_box == 0) {
+		return;
+	}
+	if (_ignore_disk_io_change) {
 		return;
 	}
 

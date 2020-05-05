@@ -1,22 +1,21 @@
 /*
-    Copyright (C) 2019 Paul Davis
-    Author: Johannes Mueller
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-
-*/
+ * Copyright (C) 2019 Johannes Mueller <github@johannes-mueller.org>
+ * Copyright (C) 2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <iostream>
 
@@ -90,7 +89,11 @@ ContourDesignControlProtocol::~ContourDesignControlProtocol ()
 bool
 ContourDesignControlProtocol::probe ()
 {
-	return true;
+	bool rv = LIBUSB_SUCCESS == libusb_init (0);
+	if (rv) {
+		libusb_exit (0);
+	}
+	return rv;
 }
 
 void*
@@ -195,10 +198,15 @@ ContourDesignControlProtocol::set_state (const XMLNode& node, int version)
 			_button_actions[i] = b;
 		} else {
 			double value;
-			child->get_property(X_("value"), value);
-
 			string s;
-			child->get_property(X_("unit"), s);
+
+			if (!child->get_property(X_("value"), value)) {
+				continue;
+			}
+			if (!child->get_property(X_("unit"), s)) {
+				continue;
+			}
+
 			JumpUnit unit;
 			if (s == X_("seconds")) {
 				unit = SECONDS;
@@ -256,7 +264,7 @@ get_usb_device (uint16_t vendor_id, uint16_t product_id, libusb_device** device)
 	struct libusb_device **devs;
 	struct libusb_device *dev;
 	size_t i = 0;
-	int r;
+	int r = LIBUSB_ERROR_NO_DEVICE;
 
 	*device = 0;
 
@@ -267,7 +275,7 @@ get_usb_device (uint16_t vendor_id, uint16_t product_id, libusb_device** device)
 	while ((dev = devs[i++])) {
 		struct libusb_device_descriptor desc;
 		r = libusb_get_device_descriptor (dev, &desc);
-		if (r < 0) {
+		if (r != LIBUSB_SUCCESS) {
 			goto out;
 		}
 		if (desc.idVendor == vendor_id && desc.idProduct == product_id) {
@@ -278,7 +286,7 @@ get_usb_device (uint16_t vendor_id, uint16_t product_id, libusb_device** device)
 
 out:
 	libusb_free_device_list(devs, 1);
-	if (!dev && !r) {
+	if (!dev && r == LIBUSB_SUCCESS) {
 		return LIBUSB_ERROR_NO_DEVICE;
 	}
 	return r;
@@ -299,10 +307,10 @@ ContourDesignControlProtocol::acquire_device ()
 	libusb_device* dev;
 
 
-	if ((err = get_usb_device (ContourDesign, ShuttleXpress_id, &dev)) == 0) {
+	if ((err = get_usb_device (ContourDesign, ShuttleXpress_id, &dev)) == LIBUSB_SUCCESS) {
 		_device_type = ShuttleXpress;
 	}
-	else if ((err = get_usb_device (ContourDesign, ShuttlePRO_id, &dev)) == 0) {
+	else if ((err = get_usb_device (ContourDesign, ShuttlePRO_id, &dev)) == LIBUSB_SUCCESS) {
 		_device_type = ShuttlePRO;
 	} else {
 		_device_type = None;
@@ -310,13 +318,13 @@ ContourDesignControlProtocol::acquire_device ()
 	}
 
 	err = libusb_open (dev, &_dev_handle);
-	if (err < 0) {
+	if (err != LIBUSB_SUCCESS) {
 		return err;
 	}
 
 	libusb_set_auto_detach_kernel_driver (_dev_handle, true);
 
-	if ((err = libusb_claim_interface (_dev_handle, 0x00))) {
+	if ((err = libusb_claim_interface (_dev_handle, 0x00)) != LIBUSB_SUCCESS) {
 		DEBUG_TRACE (DEBUG::ContourDesignControl, "failed to claim USB device\n");
 		goto usb_close;
 	}
@@ -333,7 +341,7 @@ ContourDesignControlProtocol::acquire_device ()
 
 	DEBUG_TRACE (DEBUG::ContourDesignControl, "callback installed\n");
 
-	if ((err = libusb_submit_transfer (_usb_transfer))) {
+	if ((err = libusb_submit_transfer (_usb_transfer)) != LIBUSB_SUCCESS) {
 		DEBUG_TRACE (DEBUG::ContourDesignControl, string_compose ("failed to submit tansfer: %1\n", err));
 		goto free_transfer;
 	}
@@ -371,7 +379,7 @@ ContourDesignControlProtocol::start ()
 	_supposed_to_quit = false;
 
 	_error = acquire_device();
-	if (_error) {
+	if (_error != LIBUSB_SUCCESS) {
 		return;
 	}
 
@@ -549,7 +557,7 @@ ContourDesignControlProtocol::prev_marker_keep_rolling ()
 	samplepos_t pos = session->locations()->first_mark_before (session->transport_sample());
 
 	if (pos >= 0) {
-		session->request_locate (pos, _keep_rolling && session->transport_rolling());
+		session->request_locate (pos, RollIfAppropriate);
 	} else {
 		session->goto_start ();
 	}
@@ -561,7 +569,7 @@ ContourDesignControlProtocol::next_marker_keep_rolling ()
 	samplepos_t pos = session->locations()->first_mark_after (session->transport_sample());
 
 	if (pos >= 0) {
-		session->request_locate (pos, _keep_rolling && session->transport_rolling());
+		session->request_locate (pos, RollIfAppropriate);
 	} else {
 		session->goto_end();
 	}
@@ -584,7 +592,7 @@ ContourDesignControlProtocol::jog_event_forward ()
 void
 ContourDesignControlProtocol::jump_forward (JumpDistance dist)
 {
-	bool kr = _keep_rolling && session->transport_rolling ();
+	LocateTransportDisposition kr = _keep_rolling ? RollIfAppropriate : MustStop;
 	switch (dist.unit) {
 	case SECONDS: jump_by_seconds (dist.value, kr); break;
 	case BEATS: jump_by_beats (dist.value, kr); break;
@@ -619,7 +627,7 @@ ContourDesignControlProtocol::shuttle_event (int position)
 
 	if (position != 0) {
 		if (_shuttle_was_zero) {
-			_was_rolling_before_shuttle = session->transport_rolling ();
+			_was_rolling_before_shuttle = transport_rolling ();
 		}
 		const vector<double>& spds = _shuttle_speeds;
 		const double speed = position > 0 ? spds[position-1] : -spds[-position-1];

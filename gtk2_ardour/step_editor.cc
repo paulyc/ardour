@@ -1,21 +1,24 @@
 /*
-    Copyright (C) 2012 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2010-2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2010-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2011-2015 David Robillard <d@drobilla.net>
+ * Copyright (C) 2013-2018 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include "pbd/stacktrace.h"
 
@@ -190,7 +193,9 @@ StepEditor::check_step_edit ()
 		Evoral::EventType type;
 		uint32_t size;
 
-		incoming.read_prefix (&time, &type, &size);
+		if (!incoming.read_prefix (&time, &type, &size)) {
+			break;
+		}
 
 		if (size > bufsize) {
 			delete [] buf;
@@ -198,9 +203,11 @@ StepEditor::check_step_edit ()
 			buf = new uint8_t[bufsize];
 		}
 
-		incoming.read_contents (size, buf);
+		if (!incoming.read_contents (size, buf)) {
+			break;
+		}
 
-		if ((buf[0] & 0xf0) == MIDI_CMD_NOTE_ON) {
+		if ((buf[0] & 0xf0) == MIDI_CMD_NOTE_ON && size == 3) {
 			step_add_note (buf[0] & 0xf, buf[1], buf[2], Temporal::Beats());
 		}
 	}

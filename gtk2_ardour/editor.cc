@@ -1,21 +1,33 @@
 /*
-    Copyright (C) 2000-2009 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2007 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2005-2009 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2005-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2005 Karsten Wiese <fzuuzf@googlemail.com>
+ * Copyright (C) 2006-2009 Sampo Savolainen <v2@iki.fi>
+ * Copyright (C) 2006-2015 David Robillard <d@drobilla.net>
+ * Copyright (C) 2006-2017 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2008 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2012-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013-2015 Colin Fletcher <colin.m.fletcher@googlemail.com>
+ * Copyright (C) 2014-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2014-2019 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2015 André Nusser <andre.nusser@googlemail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 /* Note: public Editor methods are documented in public_editor.h */
 
@@ -90,6 +102,7 @@
 
 #include "actions.h"
 #include "analysis_window.h"
+#include "ardour_message.h"
 #include "audio_clock.h"
 #include "audio_region_view.h"
 #include "audio_streamview.h"
@@ -109,6 +122,7 @@
 #include "editor_route_groups.h"
 #include "editor_routes.h"
 #include "editor_snapshots.h"
+#include "editor_sources.h"
 #include "editor_summary.h"
 #include "enums_convert.h"
 #include "export_report.h"
@@ -359,7 +373,6 @@ Editor::Editor ()
 	, lock_dialog (0)
 	  /* , last_event_time { 0, 0 } */ /* this initialization style requires C++11 */
 	, _dragging_playhead (false)
-	, _dragging_edit_point (false)
 	, _follow_playhead (true)
 	, _stationary_playhead (false)
 	, _maximised (false)
@@ -520,9 +533,6 @@ Editor::Editor ()
 	meter_label.hide();
 	meter_label.set_no_show_all();
 
-	if (Profile->get_trx()) {
-		mark_label.set_text (_("Markers"));
-	}
 	mark_label.set_name ("EditorRulerLabel");
 	mark_label.set_size_request (-1, (int)timebar_height);
 	mark_label.set_alignment (1.0, 0.5);
@@ -579,9 +589,7 @@ Editor::Editor ()
 
 	HBox* h = manage (new HBox);
 	_group_tabs = new EditorGroupTabs (this);
-	if (!ARDOUR::Profile->get_trx()) {
-		h->pack_start (*_group_tabs, PACK_SHRINK);
-	}
+	h->pack_start (*_group_tabs, PACK_SHRINK);
 	h->pack_start (edit_controls_vbox);
 	controls_layout.add (*h);
 
@@ -639,6 +647,7 @@ Editor::Editor ()
 	_route_groups = new EditorRouteGroups (this);
 	_routes = new EditorRoutes (this);
 	_regions = new EditorRegions (this);
+	_sources = new EditorSources (this);
 	_snapshots = new EditorSnapshots (this);
 	_locations = new EditorLocations (this);
 	_time_info_box = new TimeInfoBox ("EditorTimeInfo", true);
@@ -649,8 +658,9 @@ Editor::Editor ()
 	Location::end_changed.connect (*this, invalidator (*this), boost::bind (&Editor::location_changed, this, _1), gui_context());
 	Location::changed.connect (*this, invalidator (*this), boost::bind (&Editor::location_changed, this, _1), gui_context());
 
-	add_notebook_page (_("Regions"), _regions->widget ());
 	add_notebook_page (_("Tracks & Busses"), _routes->widget ());
+	add_notebook_page (_("Sources"), _sources->widget ());
+	add_notebook_page (_("Regions"), _regions->widget ());
 	add_notebook_page (_("Snapshots"), _snapshots->widget ());
 	add_notebook_page (_("Track & Bus Groups"), _route_groups->widget ());
 	add_notebook_page (_("Ranges & Marks"), _locations->widget ());
@@ -701,18 +711,13 @@ Editor::Editor ()
 	_summary_hbox.pack_start (*summary_frame, true, true);
 	_summary_hbox.pack_start (*summary_arrows_right, false, false);
 
-	if (!ARDOUR::Profile->get_trx()) {
-		editor_summary_pane.add (_summary_hbox);
-	}
-
+	editor_summary_pane.add (_summary_hbox);
 	edit_pane.set_check_divider_position (true);
 	edit_pane.add (editor_summary_pane);
-	if (!ARDOUR::Profile->get_trx()) {
-		_editor_list_vbox.pack_start (*_time_info_box, false, false, 0);
-		_editor_list_vbox.pack_start (_the_notebook);
-		edit_pane.add (_editor_list_vbox);
-		edit_pane.set_child_minsize (_editor_list_vbox, 30); /* rough guess at width of notebook tabs */
-	}
+	_editor_list_vbox.pack_start (*_time_info_box, false, false, 0);
+	_editor_list_vbox.pack_start (_the_notebook);
+	edit_pane.add (_editor_list_vbox);
+	edit_pane.set_child_minsize (_editor_list_vbox, 30); /* rough guess at width of notebook tabs */
 
 	edit_pane.set_drag_cursor (*_cursors->expand_left_right);
 	editor_summary_pane.set_drag_cursor (*_cursors->expand_up_down);
@@ -1125,7 +1130,7 @@ Editor::control_scroll (float fraction)
 bool
 Editor::deferred_control_scroll (samplepos_t /*target*/)
 {
-	_session->request_locate (*_control_scroll_target, _session->transport_rolling());
+	_session->request_locate (*_control_scroll_target, RollIfAppropriate);
 	/* reset for next stream */
 	_control_scroll_target = boost::none;
 	_dragging_playhead = false;
@@ -1250,7 +1255,9 @@ Editor::map_position_change (samplepos_t sample)
 		center_screen (sample);
 	}
 
-	playhead_cursor->set_position (sample);
+	if (!_session->locate_initiated()) {
+		playhead_cursor->set_position (sample);
+	}
 }
 
 void
@@ -1334,6 +1341,7 @@ Editor::set_session (Session *t)
 	_group_tabs->set_session (_session);
 	_route_groups->set_session (_session);
 	_regions->set_session (_session);
+	_sources->set_session (_session);
 	_snapshots->set_session (_session);
 	_routes->set_session (_session);
 	_locations->set_session (_session);
@@ -1382,7 +1390,7 @@ Editor::set_session (Session *t)
 
 	/* catch up with the playhead */
 
-	_session->request_locate (playhead_cursor->current_sample ());
+	_session->request_locate (playhead_cursor->current_sample (), MustStop);
 	_pending_initial_locate = true;
 
 	update_title ();
@@ -1585,7 +1593,7 @@ Editor::popup_track_context_menu (int button, int32_t time, ItemType item_type, 
 		break;
 
 	case StreamItem:
-		if (clicked_routeview->track()) {
+		if (clicked_routeview != 0 && clicked_routeview->track()) {
 			build_menu_function = &Editor::build_track_context_menu;
 		} else {
 			build_menu_function = &Editor::build_track_bus_context_menu;
@@ -1944,7 +1952,7 @@ Editor::add_selection_context_items (Menu_Helpers::MenuList& edit_items)
 
 	edit_items.push_back (SeparatorElem());
 	edit_items.push_back (MenuElem (_("Separate"), mem_fun(*this, &Editor::separate_region_from_selection)));
-	edit_items.push_back (MenuElem (_("Convert to Region in Region List"), sigc::mem_fun(*this, &Editor::new_region_from_selection)));
+//	edit_items.push_back (MenuElem (_("Convert to Region in Region List"), sigc::mem_fun(*this, &Editor::new_region_from_selection)));
 
 	edit_items.push_back (SeparatorElem());
 	edit_items.push_back (MenuElem (_("Select All in Range"), sigc::mem_fun(*this, &Editor::select_all_selectables_using_time_selection)));
@@ -1964,8 +1972,8 @@ Editor::add_selection_context_items (Menu_Helpers::MenuList& edit_items)
 	edit_items.push_back (SeparatorElem());
 	edit_items.push_back (MenuElem (_("Consolidate Range"), sigc::bind (sigc::mem_fun(*this, &Editor::bounce_range_selection), true, false)));
 	edit_items.push_back (MenuElem (_("Consolidate Range with Processing"), sigc::bind (sigc::mem_fun(*this, &Editor::bounce_range_selection), true, true)));
-	edit_items.push_back (MenuElem (_("Bounce Range to Region List"), sigc::bind (sigc::mem_fun(*this, &Editor::bounce_range_selection), false, false)));
-	edit_items.push_back (MenuElem (_("Bounce Range to Region List with Processing"), sigc::bind (sigc::mem_fun(*this, &Editor::bounce_range_selection), false, true)));
+	edit_items.push_back (MenuElem (_("Bounce Range to Source List"), sigc::bind (sigc::mem_fun(*this, &Editor::bounce_range_selection), false, false)));
+	edit_items.push_back (MenuElem (_("Bounce Range to Source List with Processing"), sigc::bind (sigc::mem_fun(*this, &Editor::bounce_range_selection), false, true)));
 	edit_items.push_back (MenuElem (_("Export Range..."), sigc::mem_fun(*this, &Editor::export_selection)));
 	if (ARDOUR_UI::instance()->video_timeline->get_duration() > 0) {
 		edit_items.push_back (MenuElem (_("Export Video Range..."), sigc::bind (sigc::mem_fun(*(ARDOUR_UI::instance()), &ARDOUR_UI::export_video), true)));
@@ -2037,7 +2045,7 @@ Editor::add_dstream_context_items (Menu_Helpers::MenuList& edit_items)
 	/* Adding new material */
 
 	edit_items.push_back (SeparatorElem());
-	edit_items.push_back (MenuElem (_("Insert Selected Region"), sigc::bind (sigc::mem_fun(*this, &Editor::insert_region_list_selection), 1.0f)));
+	edit_items.push_back (MenuElem (_("Insert Selected Region"), sigc::bind (sigc::mem_fun(*this, &Editor::insert_source_list_selection), 1.0f)));
 	edit_items.push_back (MenuElem (_("Insert Existing Media"), sigc::bind (sigc::mem_fun(*this, &Editor::add_external_audio_action), ImportToTrack)));
 
 	/* Nudge track */
@@ -2461,14 +2469,8 @@ Editor::set_state (const XMLNode& node, int version)
 		set_stationary_playhead (yn);
 	}
 
-	RegionListSortType sort_type;
-	if (node.get_property ("region-list-sort-type", sort_type)) {
-		_regions->reset_sort_type (sort_type, true);
-	}
+	if (node.get_property ("show-editor-mixer", yn)) {
 
-	yn = false;
-	node.get_property ("show-editor-mixer", yn);
-	{
 		Glib::RefPtr<ToggleAction> tact = ActionManager::get_toggle_action (X_("Editor"), X_("show-editor-mixer"));
 		/* do it twice to force the change */
 		tact->set_active (!yn);
@@ -2578,7 +2580,6 @@ Editor::get_state ()
 	node->set_property ("maximised", _maximised);
 	node->set_property ("follow-playhead", _follow_playhead);
 	node->set_property ("stationary-playhead", _stationary_playhead);
-	node->set_property ("region-list-sort-type", _regions->sort_type ());
 	node->set_property ("mouse-mode", mouse_mode);
 	node->set_property ("join-object-range", smart_mode_action->get_active ());
 
@@ -2689,7 +2690,7 @@ Editor::snap_to (MusicSample& start, RoundMode direction, SnapPref pref, bool en
 	snap_to_internal (start, direction, pref, ensure_snap);
 }
 
-void
+static void
 check_best_snap (samplepos_t presnap, samplepos_t &test, samplepos_t &dist, samplepos_t &best)
 {
 	samplepos_t diff = abs (test - presnap);
@@ -2939,12 +2940,14 @@ Editor::snap_to_marker (samplepos_t presnap, RoundMode direction)
 	samplepos_t after;
 	samplepos_t test;
 
+	if (_session->locations()->list().empty()) {
+		/* No marks to snap to, so just don't snap */
+		return 0;
+	}
+
 	_session->locations()->marks_either_side (presnap, before, after);
 
-	if (before == max_samplepos && after == max_samplepos) {
-		/* No marks to snap to, so just don't snap */
-		return presnap;
-	} else if (before == max_samplepos) {
+	if (before == max_samplepos) {
 		test = after;
 	} else if (after == max_samplepos) {
 		test = before;
@@ -2968,6 +2971,7 @@ Editor::snap_to_marker (samplepos_t presnap, RoundMode direction)
 void
 Editor::snap_to_internal (MusicSample& start, RoundMode direction, SnapPref pref, bool ensure_snap)
 {
+	UIConfiguration const& uic (UIConfiguration::instance ());
 	const samplepos_t presnap = start.sample;
 
 	samplepos_t test = max_samplepos; // for each snap, we'll use this value
@@ -2975,30 +2979,31 @@ Editor::snap_to_internal (MusicSample& start, RoundMode direction, SnapPref pref
 	samplepos_t best = max_samplepos; // this records the best snap-result we've found so far
 
 	/* check snap-to-marker */
-	if ((pref == SnapToAny_Visual) && UIConfiguration::instance().get_snap_to_marks()) {
+	if ((pref == SnapToAny_Visual) && uic.get_snap_to_marks ()) {
 		test = snap_to_marker (presnap, direction);
-		check_best_snap(presnap, test, dist, best);
+		check_best_snap (presnap, test, dist, best);
 	}
 
 	/* check snap-to-region-{start/end/sync} */
-	if (
-		(pref == SnapToAny_Visual) &&
-		(UIConfiguration::instance().get_snap_to_region_start() || UIConfiguration::instance().get_snap_to_region_end() || UIConfiguration::instance().get_snap_to_region_sync())
-		) {
-		if (!region_boundary_cache.empty()) {
+	if ((pref == SnapToAny_Visual) && (uic.get_snap_to_region_start () || uic.get_snap_to_region_end () || uic.get_snap_to_region_sync ())) {
 
-			vector<samplepos_t>::iterator prev = region_boundary_cache.begin();
-			vector<samplepos_t>::iterator next = std::upper_bound (region_boundary_cache.begin(), region_boundary_cache.end(), presnap);
+		if (!region_boundary_cache.empty ()) {
+
+			vector<samplepos_t>::iterator prev = region_boundary_cache.begin ();
+			vector<samplepos_t>::iterator next = std::upper_bound (region_boundary_cache.begin (), region_boundary_cache.end (), presnap);
 			if (next != region_boundary_cache.begin ()) {
 				prev = next;
 				prev--;
 			}
+			if (next == region_boundary_cache.end ()) {
+				next--;
+			}
 
-			if ((direction == RoundUpMaybe || direction == RoundUpAlways))
+			if ((direction == RoundUpMaybe || direction == RoundUpAlways)) {
 				test = *next;
-			else if ((direction == RoundDownMaybe || direction == RoundDownAlways))
+			} else if ((direction == RoundDownMaybe || direction == RoundDownAlways)) {
 				test = *prev;
-			else if (direction ==  0) {
+			} else if (direction ==  0) {
 				if ((presnap - *prev) < (*next - presnap)) {
 					test = *prev;
 				} else {
@@ -3008,32 +3013,28 @@ Editor::snap_to_internal (MusicSample& start, RoundMode direction, SnapPref pref
 
 		}
 
-		check_best_snap(presnap, test, dist, best);
+		check_best_snap (presnap, test, dist, best);
 	}
 
 	/* check Grid */
-	if (UIConfiguration::instance().get_snap_to_grid() && (_grid_type != GridTypeNone)) {
-		MusicSample pre(presnap, 0);
+	if (uic.get_snap_to_grid () && (_grid_type != GridTypeNone)) {
+		MusicSample pre (presnap, 0);
 		MusicSample post = snap_to_grid (pre, direction, pref);
-		check_best_snap(presnap, post.sample, dist, best);
+		check_best_snap (presnap, post.sample, dist, best);
+	}
+
+	if (max_samplepos == best) {
+		return;
 	}
 
 	/* now check "magnetic" state: is the grid within reasonable on-screen distance to trigger a snap?
 	 * this also helps to avoid snapping to somewhere the user can't see.  (i.e.: I clicked on a region and it disappeared!!)
 	 * ToDo: Perhaps this should only occur if EditPointMouse?
 	 */
-	int snap_threshold_s = pixel_to_sample(UIConfiguration::instance().get_snap_threshold());
-	if (ensure_snap) {
-		start.set (best, 0);
+	samplecnt_t snap_threshold_s = pixel_to_sample (uic.get_snap_threshold ());
+
+	if (!ensure_snap && ::llabs (presnap - best) > snap_threshold_s) {
 		return;
-	} else if (presnap > best) {
-		if (presnap > (best+ snap_threshold_s)) {
-			best = presnap;
-		}
-	} else if (presnap < best) {
-		if (presnap < (best - snap_threshold_s)) {
-			 best = presnap;
-		}
 	}
 
 	start.set (best, 0);
@@ -3055,9 +3056,7 @@ Editor::setup_toolbar ()
 	Glib::RefPtr<SizeGroup> mouse_mode_size_group = SizeGroup::create (SIZE_GROUP_VERTICAL);
 	mouse_mode_size_group->add_widget (smart_mode_button);
 	mouse_mode_size_group->add_widget (mouse_move_button);
-	if (!Profile->get_mixbus()) {
-		mouse_mode_size_group->add_widget (mouse_cut_button);
-	}
+	mouse_mode_size_group->add_widget (mouse_cut_button);
 	mouse_mode_size_group->add_widget (mouse_select_button);
 	mouse_mode_size_group->add_widget (mouse_timefx_button);
 	if (!Profile->get_mixbus()) {
@@ -3089,24 +3088,20 @@ Editor::setup_toolbar ()
 	mouse_mode_size_group->add_widget (nudge_backward_button);
 
 	mouse_mode_hbox->set_spacing (2);
-
-	if (!ARDOUR::Profile->get_trx()) {
-		mouse_mode_hbox->pack_start (smart_mode_button, false, false);
-	}
+	mouse_mode_hbox->pack_start (smart_mode_button, false, false);
 
 	mouse_mode_hbox->pack_start (mouse_move_button, false, false);
 	mouse_mode_hbox->pack_start (mouse_select_button, false, false);
 
+	mouse_mode_hbox->pack_start (mouse_cut_button, false, false);
+
 	if (!ARDOUR::Profile->get_mixbus()) {
-		mouse_mode_hbox->pack_start (mouse_cut_button, false, false);
 		mouse_mode_hbox->pack_start (mouse_audition_button, false, false);
 	}
 
-	if (!ARDOUR::Profile->get_trx()) {
-		mouse_mode_hbox->pack_start (mouse_timefx_button, false, false);
-		mouse_mode_hbox->pack_start (mouse_draw_button, false, false);
-		mouse_mode_hbox->pack_start (mouse_content_button, false, false);
-	}
+	mouse_mode_hbox->pack_start (mouse_timefx_button, false, false);
+	mouse_mode_hbox->pack_start (mouse_draw_button, false, false);
+	mouse_mode_hbox->pack_start (mouse_content_button, false, false);
 
 	mouse_mode_vbox->pack_start (*mouse_mode_hbox);
 
@@ -3117,12 +3112,10 @@ Editor::setup_toolbar ()
 
 	edit_mode_selector.set_name ("mouse mode button");
 
-	if (!ARDOUR::Profile->get_trx()) {
-		mode_box->pack_start (edit_mode_selector, false, false);
-		mode_box->pack_start (*(manage (new ArdourVSpacer ())), false, false, 3);
-		mode_box->pack_start (edit_point_selector, false, false);
-		mode_box->pack_start (*(manage (new ArdourVSpacer ())), false, false, 3);
-	}
+	mode_box->pack_start (edit_mode_selector, false, false);
+	mode_box->pack_start (*(manage (new ArdourVSpacer ())), false, false, 3);
+	mode_box->pack_start (edit_point_selector, false, false);
+	mode_box->pack_start (*(manage (new ArdourVSpacer ())), false, false, 3);
 
 	mode_box->pack_start (*mouse_mode_box, false, false);
 
@@ -3155,9 +3148,6 @@ Editor::setup_toolbar ()
 
 	if (ARDOUR::Profile->get_mixbus()) {
 		_zoom_box.pack_start (zoom_preset_selector, false, false);
-	} else if (ARDOUR::Profile->get_trx()) {
-		mode_box->pack_start (zoom_out_button, false, false);
-		mode_box->pack_start (zoom_in_button, false, false);
 	} else {
 		_zoom_box.pack_start (zoom_out_button, false, false);
 		_zoom_box.pack_start (zoom_in_button, false, false);
@@ -3188,9 +3178,6 @@ Editor::setup_toolbar ()
 
 	if (ARDOUR::Profile->get_mixbus()) {
 		_track_box.pack_start (visible_tracks_selector);
-	} else if (ARDOUR::Profile->get_trx()) {
-		_track_box.pack_start (tav_shrink_button);
-		_track_box.pack_start (tav_expand_button);
 	} else {
 		_track_box.pack_start (visible_tracks_selector);
 		_track_box.pack_start (tav_shrink_button);
@@ -3245,24 +3232,13 @@ Editor::setup_toolbar ()
 	ebox_vpacker.show();
 
 	toolbar_hbox.pack_start (*mode_box, false, false);
-
-	if (!ARDOUR::Profile->get_trx()) {
-
-		toolbar_hbox.pack_start (*(manage (new ArdourVSpacer ())), false, false, 3);
-
-		toolbar_hbox.pack_start (snap_box, false, false);
-
-		toolbar_hbox.pack_start (*(manage (new ArdourVSpacer ())), false, false, 3);
-
-		toolbar_hbox.pack_start (*nudge_box, false, false);
-
-		toolbar_hbox.pack_end (_zoom_box, false, false, 2);
-
-		toolbar_hbox.pack_end (*(manage (new ArdourVSpacer ())), false, false, 3);
-
-		toolbar_hbox.pack_end (_track_box, false, false);
-
-	}
+	toolbar_hbox.pack_start (*(manage (new ArdourVSpacer ())), false, false, 3);
+	toolbar_hbox.pack_start (snap_box, false, false);
+	toolbar_hbox.pack_start (*(manage (new ArdourVSpacer ())), false, false, 3);
+	toolbar_hbox.pack_start (*nudge_box, false, false);
+	toolbar_hbox.pack_end (_zoom_box, false, false, 2);
+	toolbar_hbox.pack_end (*(manage (new ArdourVSpacer ())), false, false, 3);
+	toolbar_hbox.pack_end (_track_box, false, false);
 
 	toolbar_hbox.show_all ();
 }
@@ -4281,6 +4257,13 @@ Editor::audio_region_selection_covers (samplepos_t where)
 }
 
 void
+Editor::cleanup_regions ()
+{
+	_regions->remove_unused_regions();
+}
+
+
+void
 Editor::prepare_for_cleanup ()
 {
 	cut_buffer->clear_regions ();
@@ -4838,7 +4821,7 @@ Editor::get_preferred_edit_position (EditIgnoreOption ignore, bool from_context_
 				break;
 			}
 		}
-		/* fallthru */
+		/* fallthrough */
 
 	default:
 	case EditAtMouse:
@@ -5202,11 +5185,11 @@ Editor::show_rhythm_ferret ()
 void
 Editor::first_idle ()
 {
-	MessageDialog* dialog = 0;
+	ArdourMessageDialog* dialog = 0;
 
 	if (track_views.size() > 1) {
 		Timers::TimerSuspender t;
-		dialog = new MessageDialog (
+		dialog = new ArdourMessageDialog (
 			string_compose (_("Please wait while %1 loads visual data."), PROGRAM_NAME),
 			true
 			);
@@ -5456,6 +5439,10 @@ Editor::add_stripables (StripableList& sl)
 
 	for (StripableList::iterator s = sl.begin(); s != sl.end(); ++s) {
 
+		if ((*s)->is_foldbackbus()) {
+			continue;
+		}
+
 		if ((v = boost::dynamic_pointer_cast<VCA> (*s)) != 0) {
 
 			VCATimeAxisView* vtv = new VCATimeAxisView (*this, _session, *_track_canvas);
@@ -5527,6 +5514,11 @@ Editor::timeaxisview_deleted (TimeAxisView *tv)
 
 	ENSURE_GUI_THREAD (*this, &Editor::timeaxisview_deleted, tv);
 
+	if (dynamic_cast<AutomationTimeAxisView*> (tv)) {
+		selection->remove (tv);
+		return;
+	}
+
 	RouteTimeAxisView* rtav = dynamic_cast<RouteTimeAxisView*> (tv);
 
 	_routes->route_removed (tv);
@@ -5546,14 +5538,12 @@ Editor::timeaxisview_deleted (TimeAxisView *tv)
 		i = track_views.erase (i);
 	}
 
-	/* update whatever the current mixer strip is displaying, if revelant */
-
-	boost::shared_ptr<Route> route;
-
-	if (rtav) {
-		route = rtav->route ();
+	/* Update the route that is shown in the editor-mixer. */
+	if (!rtav) {
+		return;
 	}
 
+	boost::shared_ptr<Route> route = rtav->route ();
 	if (current_mixer_strip && current_mixer_strip->route() == route) {
 
 		TimeAxisView* next_tv;
@@ -5714,18 +5704,6 @@ void
 Editor::audition_region_from_region_list ()
 {
 	_regions->selection_mapover (sigc::mem_fun (*this, &Editor::consider_auditioning));
-}
-
-void
-Editor::hide_region_from_region_list ()
-{
-	_regions->selection_mapover (sigc::mem_fun (*this, &Editor::hide_a_region));
-}
-
-void
-Editor::show_region_in_region_list ()
-{
-	_regions->selection_mapover (sigc::mem_fun (*this, &Editor::show_a_region));
 }
 
 void
@@ -5945,9 +5923,11 @@ Editor::super_rapid_screen_update ()
 			snapped_cursor->set_position (ms.sample);
 			snapped_cursor->show ();
 		}
-	} else if (mouse_sample (where.sample, ignored)) { // cursor is in the editing canvas. show it.
+	} else if (_edit_point == EditAtMouse && mouse_sample (where.sample, ignored)) {
+		/* cursor is in the editing canvas. show it. */
 		snapped_cursor->show ();
-	} else { // mouse is out of the editing canvas. hide the snapped_cursor
+	} else {
+		/* mouse is out of the editing canvas, or edit-point isn't mouse. Hide the snapped_cursor */
 		snapped_cursor->hide ();
 	}
 
@@ -5974,7 +5954,9 @@ Editor::super_rapid_screen_update ()
 		return;
 	}
 
-	playhead_cursor->set_position (sample);
+	if (!_pending_locate_request) {
+		playhead_cursor->set_position (sample);
+	}
 
 	if (_session->requested_return_sample() >= 0) {
 		_last_update_time = 0;
@@ -6035,6 +6017,7 @@ Editor::session_going_away ()
 	/* rip everything out of the list displays */
 
 	_regions->clear ();
+	_sources->clear ();
 	_routes->clear ();
 	_route_groups->clear ();
 

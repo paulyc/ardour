@@ -1,20 +1,25 @@
 /*
-    Copyright (C) 2006,2007 John Anderson
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2006-2007 John Anderson
+ * Copyright (C) 2007-2009 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2009-2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2015-2016 Len Ovens <len@ovenwerks.net>
+ * Copyright (C) 2016-2018 Ben Loftis <ben@harrisonconsoles.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef ardour_mackie_control_protocol_h
 #define ardour_mackie_control_protocol_h
@@ -41,6 +46,7 @@
 #include "timer.h"
 #include "device_info.h"
 #include "device_profile.h"
+#include "subview.h"
 
 namespace ARDOUR {
 	class AutomationControl;
@@ -95,14 +101,6 @@ class MackieControlProtocol
 		Plugins,
 	};
 
-	enum SubViewMode {
-		None,
-		EQ,
-		Dynamics,
-		Sends,
-		TrackView,
-	};
-
 	enum FlipMode {
 		Normal, /* fader controls primary, vpot controls secondary */
 		Mirror, /* fader + vpot control secondary */
@@ -129,9 +127,7 @@ class MackieControlProtocol
 
 	FlipMode flip_mode () const { return _flip_mode; }
 	ViewMode view_mode () const { return _view_mode; }
-	SubViewMode subview_mode () const { return _subview_mode; }
-	static bool subview_mode_would_be_ok (SubViewMode, boost::shared_ptr<ARDOUR::Stripable>);
-	boost::shared_ptr<ARDOUR::Stripable> subview_stripable() const;
+	boost::shared_ptr<Mackie::Subview> subview() { return _subview; }
 	bool zoom_mode () const { return modifier_state() & MODIFIER_ZOOM; }
 	bool     metering_active () const { return _metering_active; }
 
@@ -146,7 +142,8 @@ class MackieControlProtocol
 	void set_automation_state (ARDOUR::AutoState);
 
 	void set_view_mode (ViewMode);
-	int set_subview_mode (SubViewMode, boost::shared_ptr<ARDOUR::Stripable>);
+	bool set_subview_mode (Mackie::Subview::Mode, boost::shared_ptr<ARDOUR::Stripable>);
+	bool redisplay_subview_mode ();
 	void set_flip_mode (FlipMode);
 	void display_view_mode ();
 
@@ -306,7 +303,6 @@ class MackieControlProtocol
 	PBD::ScopedConnectionList audio_engine_connections;
 	PBD::ScopedConnectionList session_connections;
 	PBD::ScopedConnectionList stripable_connections;
-	PBD::ScopedConnectionList subview_stripable_connections;
 	PBD::ScopedConnectionList gui_connections;
 	PBD::ScopedConnectionList fader_automation_connections;
 	// timer for two quick marker left presses
@@ -324,8 +320,7 @@ class MackieControlProtocol
 	bool                     _scrub_mode;
 	FlipMode                 _flip_mode;
 	ViewMode                 _view_mode;
-	SubViewMode              _subview_mode;
-	boost::shared_ptr<ARDOUR::Stripable> _subview_stripable;
+	boost::shared_ptr<Mackie::Subview> _subview;
 	int                      _current_selected_track;
 	int                      _modifier_state;
 	ButtonMap                 button_map;
@@ -351,7 +346,6 @@ class MackieControlProtocol
 	int create_surfaces ();
 	bool periodic();
 	bool redisplay();
-	bool redisplay_subview_mode ();
 	bool hui_heartbeat ();
 	void build_gui ();
 	bool midi_input_handler (Glib::IOCondition ioc, MIDI::Port* port);
@@ -364,7 +358,7 @@ class MackieControlProtocol
         void initialize ();
         int set_device_info (const std::string& device_name);
 	void update_configuration_state ();
-	
+
 	/* MIDI port connection management */
 
 	PBD::ScopedConnection port_connection;

@@ -1,21 +1,26 @@
 /*
-    Copyright (C) 2000 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2000-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2007-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2008-2009 Sampo Savolainen <v2@iki.fi>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2016-2017 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2018 Johannes Mueller <github@johannes-mueller.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifdef WAF_BUILD
 #include "libardour-config.h"
@@ -83,6 +88,7 @@ PluginInsert::PluginInsert (Session& s, boost::shared_ptr<Plugin> plug)
 	, _maps_from_state (false)
 	, _latency_changed (false)
 	, _bypass_port (UINT32_MAX)
+	, _inverted_bypass_enable (false)
 	, _stat_reset (0)
 {
 	/* the first is the master */
@@ -107,8 +113,14 @@ PluginInsert::~PluginInsert ()
 void
 PluginInsert::set_strict_io (bool b)
 {
+	if (!_plugins.empty() && _plugins.front()->connect_all_audio_outputs ()) {
+		/* Ignore route setting, allow plugin to add/remove ports */
+		b = false;
+	}
+
 	bool changed = _strict_io != b;
 	_strict_io = b;
+
 	if (changed) {
 		PluginConfigChanged (); /* EMIT SIGNAL */
 	}
@@ -211,7 +223,7 @@ PluginInsert::add_sidechain (uint32_t n_audio, uint32_t n_midi)
 	} else if (owner()) {
 		n << "SC " << owner()->name() << "/" << name() << " " << Session::next_name_id ();
 	} else {
-		n << "tobeRenamed";
+		n << "toBeRenamed" << id().to_s();
 	}
 	SideChain *sc = new SideChain (_session, n.str ());
 	_sidechain = boost::shared_ptr<SideChain> (sc);
@@ -475,8 +487,11 @@ PluginInsert::create_automatable_parameters ()
 
 		boost::shared_ptr<AutomationList> list(new AutomationList(param, desc));
 		boost::shared_ptr<AutomationControl> c (new PluginControl(this, param, desc, list));
-		if (!automatable || (limit_automatables > 0 && i > limit_automatables)) {
-			c->set_flags (Controllable::Flag ((int)c->flags() | Controllable::NotAutomatable));
+		if (!automatable || (limit_automatables > 0 && what_can_be_automated ().size() > limit_automatables)) {
+			c->set_flag (Controllable::NotAutomatable);
+		}
+		if (desc.inline_ctrl) {
+			c->set_flag (Controllable::InlineControl);
 		}
 		add_control (c);
 		plugin->set_automation_control (i, c);
@@ -494,7 +509,7 @@ PluginInsert::create_automatable_parameters ()
 			}
 			boost::shared_ptr<AutomationControl> c (new PluginPropertyControl(this, param, desc, list));
 			if (!Variant::type_is_numeric(desc.datatype)) {
-				c->set_flags (Controllable::Flag ((int)c->flags() | Controllable::NotAutomatable));
+				c->set_flag (Controllable::NotAutomatable);
 			}
 			add_control (c);
 		}
@@ -666,11 +681,6 @@ PluginInsert::activate ()
 void
 PluginInsert::deactivate ()
 {
-#ifdef MIXBUS
-	if (is_nonbypassable ()) {
-		return;
-	}
-#endif
 	_timing_stats.reset ();
 	Processor::deactivate ();
 
@@ -707,7 +717,7 @@ PluginInsert::enable (bool yn)
 			activate ();
 		}
 		boost::shared_ptr<AutomationControl> ac = automation_control (Evoral::Parameter (PluginAutomation, 0, _bypass_port));
-		const double val = yn ? 1.0 : 0.0;
+		const double val = yn ^ _inverted_bypass_enable ? 1.0 : 0.0;
 		ac->set_value (val, Controllable::NoGroup);
 
 #ifdef ALLOW_VST_BYPASS_TO_FAIL // yet unused, see also vst_plugin.cc
@@ -739,7 +749,7 @@ PluginInsert::enabled () const
 		return Processor::enabled ();
 	} else {
 		boost::shared_ptr<const AutomationControl> ac = boost::const_pointer_cast<AutomationControl> (automation_control (Evoral::Parameter (PluginAutomation, 0, _bypass_port)));
-		return (ac->get_value () > 0 && _pending_active);
+		return ((ac->get_value () > 0) ^ _inverted_bypass_enable) && _pending_active;
 	}
 }
 
@@ -823,7 +833,7 @@ PluginInsert::inplace_silence_unconnected (BufferSet& bufs, const PinMappings& o
 				}
 			}
 			if (!mapped) {
-				bufs.get (*t, out).silence (nframes, offset);
+				bufs.get_available (*t, out).silence (nframes, offset);
 			}
 		}
 	}
@@ -875,7 +885,7 @@ PluginInsert::connect_and_run (BufferSet& bufs, samplepos_t start, samplepos_t e
 				uint32_t idx = in_map.p(0).get (*t, i, &valid);
 				if (valid) {
 					assert (idx == 0);
-					bufs.get (*t, i).read_from (bufs.get (*t, first_idx), nframes, offset, offset);
+					bufs.get_available (*t, i).read_from (bufs.get_available (*t, first_idx), nframes, offset, offset);
 				}
 			}
 		}
@@ -926,7 +936,7 @@ PluginInsert::connect_and_run (BufferSet& bufs, samplepos_t start, samplepos_t e
 			_plugins.front()->connect_and_run (bufs, start, end, speed, mb_in_map, mb_out_map, nframes, offset);
 
 			for (uint32_t out = _configured_in.n_audio (); out < bufs.count().get (DataType::AUDIO); ++out) {
-				bufs.get (DataType::AUDIO, out).silence (nframes, offset);
+				bufs.get_available (DataType::AUDIO, out).silence (nframes, offset);
 			}
 		}
 	} else
@@ -958,7 +968,7 @@ PluginInsert::connect_and_run (BufferSet& bufs, samplepos_t start, samplepos_t e
 				uint32_t in_idx = thru_map.get (*t, out, &valid);
 				uint32_t m = out + natural_input_streams ().get (*t);
 				if (valid) {
-					_delaybuffers.delay (*t, out, inplace_bufs.get (*t, m), bufs.get (*t, in_idx), nframes, offset, offset);
+					_delaybuffers.delay (*t, out, inplace_bufs.get_available (*t, m), bufs.get_available (*t, in_idx), nframes, offset, offset);
 					used_outputs.set (*t, out, 1); // mark as used
 				} else {
 					used_outputs.get (*t, out, &valid);
@@ -966,7 +976,7 @@ PluginInsert::connect_and_run (BufferSet& bufs, samplepos_t start, samplepos_t e
 						/* the plugin is expected to write here, but may not :(
 						 * (e.g. drumgizmo w/o kit loaded)
 						 */
-						inplace_bufs.get (*t, m).silence (nframes);
+						inplace_bufs.get_available (*t, m).silence (nframes);
 					}
 				}
 			}
@@ -986,9 +996,9 @@ PluginInsert::connect_and_run (BufferSet& bufs, samplepos_t start, samplepos_t e
 					uint32_t in_idx = in_map.p(pc).get (*t, in, &valid);
 					uint32_t m = mapped.get (*t);
 					if (valid) {
-						inplace_bufs.get (*t, m).read_from (bufs.get (*t, in_idx), nframes, offset, offset);
+						inplace_bufs.get_available (*t, m).read_from (bufs.get_available (*t, in_idx), nframes, offset, offset);
 					} else {
-						inplace_bufs.get (*t, m).silence (nframes, offset);
+						inplace_bufs.get_available (*t, m).silence (nframes, offset);
 					}
 					mapped.set (*t, m + 1);
 				}
@@ -1017,11 +1027,11 @@ PluginInsert::connect_and_run (BufferSet& bufs, samplepos_t start, samplepos_t e
 				if (!valid) {
 					nonzero_out.get (*t, out, &valid);
 					if (!valid) {
-						bufs.get (*t, out).silence (nframes, offset);
+						bufs.get_available (*t, out).silence (nframes, offset);
 					}
 				} else {
 					uint32_t m = out + natural_input_streams ().get (*t);
-					bufs.get (*t, out).read_from (inplace_bufs.get (*t, m), nframes, offset, offset);
+					bufs.get_available (*t, out).read_from (inplace_bufs.get_available (*t, m), nframes, offset, offset);
 				}
 			}
 		}
@@ -1065,7 +1075,7 @@ PluginInsert::connect_and_run (BufferSet& bufs, samplepos_t start, samplepos_t e
 			_signal_analysis_collect_nsamples_max = 0;
 			_signal_analysis_collect_nsamples     = 0;
 
-			AnalysisDataGathered (&_signal_analysis_inputs, &_signal_analysis_outputs);
+			AnalysisDataGathered (&_signal_analysis_inputs, &_signal_analysis_outputs); /* EMIT SIGNAL */
 		}
 	}
 }
@@ -1094,7 +1104,7 @@ PluginInsert::bypass (BufferSet& bufs, pframes_t nframes)
 		// copy all inputs
 		for (DataType::iterator t = DataType::begin(); t != DataType::end(); ++t) {
 			for (uint32_t in = 0; in < _configured_internal.get (*t); ++in) {
-				inplace_bufs.get (*t, in).read_from (bufs.get (*t, in), nframes, 0, 0);
+				inplace_bufs.get_available (*t, in).read_from (bufs.get_available (*t, in), nframes, 0, 0);
 			}
 		}
 		ARDOUR::ChanMapping used_outputs;
@@ -1104,7 +1114,7 @@ PluginInsert::bypass (BufferSet& bufs, pframes_t nframes)
 				bool valid;
 				uint32_t in_idx = thru_map.get (*t, out, &valid);
 				if (valid) {
-					bufs.get (*t, out).read_from (inplace_bufs.get (*t, in_idx), nframes, 0, 0);
+					bufs.get_available (*t, out).read_from (inplace_bufs.get_available (*t, in_idx), nframes, 0, 0);
 					used_outputs.set (*t, out, 1); // mark as used
 				}
 			}
@@ -1121,7 +1131,7 @@ PluginInsert::bypass (BufferSet& bufs, pframes_t nframes)
 				if (!valid) {
 					continue;
 				}
-				bufs.get (*t, out).read_from (inplace_bufs.get (*t, in_idx), nframes, 0, 0);
+				bufs.get_available (*t, out).read_from (inplace_bufs.get_available (*t, in_idx), nframes, 0, 0);
 				used_outputs.set (*t, out, 1); // mark as used
 			}
 		}
@@ -1134,7 +1144,7 @@ PluginInsert::bypass (BufferSet& bufs, pframes_t nframes)
 				bool valid;
 				used_outputs.get (*t, out, &valid);
 				if (!valid) {
-						bufs.get (*t, out).silence (nframes, 0);
+						bufs.get_available (*t, out).silence (nframes, 0);
 				}
 			}
 		}
@@ -1152,7 +1162,7 @@ PluginInsert::bypass (BufferSet& bufs, pframes_t nframes)
 					uint32_t idx = in_map.get (*t, i, &valid);
 					if (valid) {
 						assert (idx == 0);
-						bufs.get (*t, i).read_from (bufs.get (*t, first_idx), nframes, 0, 0);
+						bufs.get_available (*t, i).read_from (bufs.get_available (*t, first_idx), nframes, 0, 0);
 					}
 				}
 			}
@@ -1164,16 +1174,16 @@ PluginInsert::bypass (BufferSet& bufs, pframes_t nframes)
 				bool valid;
 				uint32_t src_idx = out_map.get_src (*t, out, &valid);
 				if (!valid) {
-					bufs.get (*t, out).silence (nframes, 0);
+					bufs.get_available (*t, out).silence (nframes, 0);
 					continue;
 				}
 				uint32_t in_idx = in_map.get (*t, src_idx, &valid);
 				if (!valid) {
-					bufs.get (*t, out).silence (nframes, 0);
+					bufs.get_available (*t, out).silence (nframes, 0);
 					continue;
 				}
-				if (in_idx != src_idx) {
-					bufs.get (*t, out).read_from (bufs.get (*t, in_idx), nframes, 0, 0);
+				if (in_idx != out) {
+					bufs.get_available (*t, out).read_from (bufs.get_available (*t, in_idx), nframes, 0, 0);
 				}
 			}
 		}
@@ -1286,13 +1296,14 @@ PluginInsert::automate_and_run (BufferSet& bufs, samplepos_t start, samplepos_t 
 
 	while (nframes) {
 
-		samplecnt_t cnt = min (((samplecnt_t) ceil (next_event.when) - start), (samplecnt_t) nframes);
+		samplecnt_t cnt = min ((samplecnt_t) ceil (fabs (next_event.when - start)), (samplecnt_t) nframes);
+		assert (cnt > 0);
 
-		connect_and_run (bufs, start, start + cnt, speed, cnt, offset, true); // XXX (start + cnt) * speed
+		connect_and_run (bufs, start, start + cnt * speed, speed, cnt, offset, true);
 
 		nframes -= cnt;
 		offset += cnt;
-		start += cnt;
+		start += cnt * speed;
 
 		map_loop_range (start, end);
 
@@ -1304,7 +1315,7 @@ PluginInsert::automate_and_run (BufferSet& bufs, samplepos_t start, samplepos_t 
 	/* cleanup anything that is left to do */
 
 	if (nframes) {
-		connect_and_run (bufs, start, start + nframes, speed, nframes, offset, true);
+		connect_and_run (bufs, start, start + nframes * speed, speed, nframes, offset, true);
 	}
 }
 
@@ -1579,30 +1590,7 @@ PluginInsert::has_midi_thru () const
 bool
 PluginInsert::is_channelstrip () const
 {
-#ifdef MIXBUS
-	return _plugins.front()->is_channelstrip();
-#else
 	return false;
-#endif
-}
-
-bool
-PluginInsert::is_nonbypassable () const
-{
-#ifdef MIXBUS
-	return _plugins.front()->is_nonbypassable ();
-#else
-	return false;
-#endif
-}
-
-bool
-PluginInsert::show_on_ctrl_surface () const
-{
-	if (is_channelstrip () || !is_nonbypassable ()) {
-		return false;
-	}
-	return true;
 }
 
 bool
@@ -2524,7 +2512,6 @@ PluginInsert::set_control_ids (const XMLNode& node, int version)
 		/* this may create the new controllable */
 		boost::shared_ptr<Evoral::Control> c = control (Evoral::Parameter (PluginAutomation, 0, p));
 
-#ifndef NO_PLUGIN_STATE
 		if (!c) {
 			continue;
 		}
@@ -2532,7 +2519,6 @@ PluginInsert::set_control_ids (const XMLNode& node, int version)
 		if (ac) {
 			ac->set_state (**iter, version);
 		}
-#endif
 	}
 }
 
@@ -2675,8 +2661,9 @@ PluginInsert::set_state(const XMLNode& node, int version)
 		boost::shared_ptr<LuaProc> lp (new LuaProc (_session.engine(), _session, ""));
 		XMLNode *ls = node.child (lp->state_node_name().c_str());
 		if (ls && lp) {
-			lp->set_script_from_state (*ls);
-			plugin = lp;
+			if (0 == lp->set_script_from_state (*ls)) {
+				plugin = lp;
+			}
 		}
 	}
 
@@ -2974,9 +2961,9 @@ PluginInsert::signal_latency() const
 }
 
 ARDOUR::PluginType
-PluginInsert::type ()
+PluginInsert::type () const
 {
-       return plugin()->get_info()->type;
+	return plugin()->get_info()->type;
 }
 
 PluginInsert::PluginControl::PluginControl (PluginInsert*                     p,
@@ -3051,10 +3038,9 @@ PluginInsert::PluginControl::get_user_string () const
 {
 	boost::shared_ptr<Plugin> plugin = _plugin->plugin (0);
 	if (plugin) {
-		char buf[32];
-		if (plugin->print_parameter (parameter().id(), buf, sizeof(buf))) {
-			assert (strlen (buf) > 0);
-			return std::string (buf) + " (" + AutomationControl::get_user_string () + ")";
+		std::string pp;
+		if (plugin->print_parameter (parameter().id(), pp) && pp.size () > 0) {
+			return pp;
 		}
 	}
 	return AutomationControl::get_user_string ();
@@ -3252,10 +3238,10 @@ PluginInsert::realtime_handle_transport_stopped ()
 }
 
 void
-PluginInsert::realtime_locate ()
+PluginInsert::realtime_locate (bool for_loop_end)
 {
 	for (Plugins::iterator i = _plugins.begin(); i != _plugins.end(); ++i) {
-		(*i)->realtime_locate ();
+		(*i)->realtime_locate (for_loop_end);
 	}
 }
 

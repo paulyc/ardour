@@ -1,20 +1,23 @@
 /*
-  Copyright (C) 2016 Paul Davis
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2018-2019 Jan Lentfer <jan.lentfer@web.de>
+ * Copyright (C) 2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2018 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2018 Térence Clastres <t.clastres@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <algorithm>
 
@@ -876,8 +879,8 @@ LaunchControlXL::knob_pan(uint8_t n)
 	}
 
 
-	if (ac && check_pick_up(knob, ac)) {
-		ac->set_value ( ac->interface_to_internal( knob->value() / 127.0), PBD::Controllable::UseGroup );
+	if (ac && check_pick_up(knob, ac, true)) {
+		ac->set_value (ac->interface_to_internal((knob->value() / 127.0), true), PBD::Controllable::UseGroup);
 	}
 }
 
@@ -1149,8 +1152,8 @@ LaunchControlXL::dm_pan_azi (KnobID k)
 
 	ac = first_selected_stripable()->pan_azimuth_control();
 
-	if (ac && check_pick_up(knob, ac)) {
-		ac->set_value ( ac->interface_to_internal( knob->value() / 127.0), PBD::Controllable::UseGroup );
+	if (ac && check_pick_up(knob, ac, true)) {
+		ac->set_value (ac->interface_to_internal((knob->value() / 127.0), true), PBD::Controllable::UseGroup);
 	}
 }
 
@@ -1550,7 +1553,7 @@ LaunchControlXL::dm_mb_sends (KnobID k)
 
 
 	if (buttons_down.find(Device) != buttons_down.end()) { // Device button hold
-		ac = first_selected_stripable()->send_pan_azi_controllable(send);
+		ac = first_selected_stripable()->send_pan_azimuth_controllable(send);
 	} else {
 		ac = first_selected_stripable()->send_level_controllable(send);
 	}

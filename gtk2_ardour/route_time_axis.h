@@ -1,21 +1,26 @@
 /*
-    Copyright (C) 2006 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2006-2008 Sampo Savolainen <v2@iki.fi>
+ * Copyright (C) 2006-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2006-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2007 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2008-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2014-2015 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_route_time_axis_h__
 #define __ardour_route_time_axis_h__
@@ -97,7 +102,8 @@ public:
 	void set_selected_regionviews (RegionSelection&);
 	void get_selectables (ARDOUR::samplepos_t start, ARDOUR::samplepos_t end, double top, double bot, std::list<Selectable *>&, bool within = false);
 	void get_inverted_selectables (Selection&, std::list<Selectable*>&);
-	void set_layer_display (LayerDisplay d, bool apply_to_selection = false);
+	void set_layer_display (LayerDisplay d);
+	void toggle_layer_display ();
 	LayerDisplay layer_display () const;
 
 	boost::shared_ptr<ARDOUR::Region> find_next_region (samplepos_t pos, ARDOUR::RegionPoint, int32_t dir);
@@ -139,10 +145,15 @@ public:
 	void reset_meter ();
 	void clear_meter ();
 	void io_changed (ARDOUR::IOChange, void *);
+	void chan_count_changed ();
 	void meter_changed ();
 	void effective_gain_display () { gm.effective_gain_display(); }
 
 	std::string state_id() const;
+
+	void show_all_automation (bool apply_to_selection = false);
+	void show_existing_automation (bool apply_to_selection = false);
+	void hide_all_automation (bool apply_to_selection = false);
 
 protected:
 	friend class StreamView;
@@ -202,6 +213,7 @@ protected:
 
 	void take_name_changed (void *src);
 	void route_property_changed (const PBD::PropertyChange&);
+	void route_active_changed ();
 	bool name_entry_changed (std::string const&);
 
 	virtual void toggle_channel_selector () {}
@@ -223,10 +235,6 @@ protected:
 	void rename_current_playlist ();
 
 	bool         automation_click (GdkEventButton *);
-
-	virtual void show_all_automation (bool apply_to_selection = false);
-	virtual void show_existing_automation (bool apply_to_selection = false);
-	virtual void hide_all_automation (bool apply_to_selection = false);
 
 	void timestretch (samplepos_t start, samplepos_t end);
 	void speed_changed ();
@@ -254,7 +262,8 @@ protected:
 	Gtk::MenuItem*      plugins_submenu_item;
 	RouteGroupMenu*     route_group_menu;
 	Gtk::Menu*          playlist_action_menu;
-	Gtk::MenuItem*      playlist_item;
+	Gtk::MenuItem*      overlaid_menu_item;
+	Gtk::MenuItem*      stacked_menu_item;
 
 	void use_playlist (Gtk::RadioMenuItem *item, boost::weak_ptr<ARDOUR::Playlist> wpl);
 
@@ -283,6 +292,7 @@ protected:
 	UnderlayMirrorList _underlay_mirrors;
 
 	bool _ignore_set_layer_display;
+	void layer_display_menu_change (Gtk::MenuItem* item);
 
 protected:
 	void update_pan_track_visibility ();

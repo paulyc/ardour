@@ -1,20 +1,25 @@
 /*
-    Copyright (C) 2006 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2006-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2007-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2014-2018 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2016 Julien "_FrnchFrgg_" RIVAUD <frnchfrgg@free.fr>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 #include "pbd/error.h"
 
 #include "ardour/amp.h"
@@ -68,12 +73,12 @@ Track::~Track ()
 	DEBUG_TRACE (DEBUG::Destruction, string_compose ("track %1 destructor\n", _name));
 
 	if (_disk_reader) {
-		_disk_reader->set_route (boost::shared_ptr<Route>());
+		_disk_reader->set_track (boost::shared_ptr<Track>());
 		_disk_reader.reset ();
 	}
 
 	if (_disk_writer) {
-		_disk_writer->set_route (boost::shared_ptr<Route>());
+		_disk_writer->set_track (boost::shared_ptr<Track>());
 		_disk_writer.reset ();
 	}
 }
@@ -87,27 +92,23 @@ Track::init ()
 
 	DiskIOProcessor::Flag dflags = DiskIOProcessor::Recordable;
 
-	if (_mode == Destructive && !Profile->get_trx()) {
-		dflags = DiskIOProcessor::Flag (dflags | DiskIOProcessor::Destructive);
-	}
-
 	_disk_reader.reset (new DiskReader (_session, name(), dflags));
 	_disk_reader->set_block_size (_session.get_block_size ());
-	_disk_reader->set_route (boost::dynamic_pointer_cast<Route> (shared_from_this()));
+	_disk_reader->set_track (boost::dynamic_pointer_cast<Track> (shared_from_this()));
 	_disk_reader->set_owner (this);
 
 	_disk_writer.reset (new DiskWriter (_session, name(), dflags));
 	_disk_writer->set_block_size (_session.get_block_size ());
-	_disk_writer->set_route (boost::dynamic_pointer_cast<Route> (shared_from_this()));
+	_disk_writer->set_track (boost::dynamic_pointer_cast<Track> (shared_from_this()));
 	_disk_writer->set_owner (this);
 
 	set_align_choice_from_io ();
 
 	if (!name().empty()) {
 		/* an empty name means that we are being constructed via
-		   serialized state (XML). Don't create a playlist, because one
-		   will be created or discovered during ::set_state().
-		*/
+		 * serialized state (XML). Don't create a playlist, because one
+		 * will be created or discovered during ::set_state().
+		 */
 		use_new_playlist (data_type());
 	}
 
@@ -131,6 +132,8 @@ Track::init ()
 
 	_input->changed.connect_same_thread (*this, boost::bind (&Track::input_changed, this));
 
+	_disk_reader->ConfigurationChanged.connect_same_thread (*this, boost::bind (&Track::chan_count_changed, this));
+
 	return 0;
 }
 
@@ -140,6 +143,12 @@ Track::input_changed ()
 	if (_disk_writer && _alignment_choice == Automatic) {
 		set_align_choice_from_io ();
 	}
+}
+
+void
+Track::chan_count_changed ()
+{
+	ChanCountChanged (); /* EMIT SIGNAL */
 }
 
 XMLNode&
@@ -259,7 +268,7 @@ Track::freeze_state() const
 bool
 Track::declick_in_progress () const
 {
-	return _disk_reader->declick_in_progress ();
+	return active() && _disk_reader->declick_in_progress ();
 }
 
 bool
@@ -396,20 +405,34 @@ Track::set_name (const string& str)
 
 	boost::shared_ptr<Track> me = boost::dynamic_pointer_cast<Track> (shared_from_this ());
 
-	if (_playlists[data_type()]->all_regions_empty () && _session.playlists()->playlists_for_track (me).size() == 1) {
-		/* Only rename the diskstream (and therefore the playlist) if
-		   a) the playlist has never had a region added to it and
-		   b) there is only one playlist for this track.
+	if (_playlists[data_type()]) {
+		if (_playlists[data_type()]->all_regions_empty () && _session.playlists()->playlists_for_track (me).size() == 1) {
+			/* Only rename the diskstream (and therefore the playlist) if
+			   a) the playlist has never had a region added to it and
+			   b) there is only one playlist for this track.
 
-		   If (a) is not followed, people can get confused if, say,
-		   they have notes about a playlist with a given name and then
-		   it changes (see mantis #4759).
+			   If (a) is not followed, people can get confused if, say,
+			   they have notes about a playlist with a given name and then
+			   it changes (see mantis #4759).
 
-		   If (b) is not followed, we rename the current playlist and not
-		   the other ones, which is a bit confusing (see mantis #4977).
-		*/
-		_disk_reader->set_name (str);
-		_disk_writer->set_name (str);
+			   If (b) is not followed, we rename the current playlist and not
+			   the other ones, which is a bit confusing (see mantis #4977).
+			*/
+			_disk_reader->set_name (str);
+			_disk_writer->set_name (str);
+		}
+	}
+
+	/* When creating a track during session-load,
+	 * do not change playlist's name, nor try to save the session.
+	 *
+	 * Changing the playlist name from 'toBeResetFroXML' breaks loading
+	 * Ardour v2..5 sessions. Older versions of Arodur identified playlist
+	 * by name, and this causes duplicate names and name conflicts.
+	 * (new track name -> new playlist name  != old playlist)
+	 */
+	if (_session.loading ()) {
+		return Route::set_name (str);
 	}
 
 	for (uint32_t n = 0; n < DataType::num_types; ++n) {
@@ -447,12 +470,6 @@ Track::ensure_input_monitoring (bool m)
 	for (PortSet::iterator i = _input->ports().begin(); i != _input->ports().end(); ++i) {
 		AudioEngine::instance()->ensure_input_monitoring ((*i)->name(), m);
 	}
-}
-
-bool
-Track::destructive () const
-{
-	return _disk_writer->destructive ();
 }
 
 list<boost::shared_ptr<Source> > &
@@ -498,9 +515,9 @@ Track::do_flush (RunContext c, bool force)
 }
 
 void
-Track::set_pending_overwrite ()
+Track::set_pending_overwrite (OverwriteReason why)
 {
-	_disk_reader->set_pending_overwrite ();
+	_disk_reader->set_pending_overwrite (why);
 }
 
 int
@@ -567,6 +584,12 @@ Track::set_slaved (bool s)
 	_disk_writer->set_slaved (s);
 }
 
+void
+Track::reload_loop ()
+{
+	_disk_reader->reload_loop ();
+}
+
 ChanCount
 Track::n_channels ()
 {
@@ -626,6 +649,13 @@ Track::find_and_use_playlist (DataType dt, PBD::ID const & id)
 	return use_playlist (dt, playlist);
 }
 
+void
+update_region_visibility(boost::shared_ptr<Region> r)
+{
+	Region::RegionPropertyChanged(r, Properties::hidden);
+}
+
+
 int
 Track::use_playlist (DataType dt, boost::shared_ptr<Playlist> p)
 {
@@ -637,9 +667,15 @@ Track::use_playlist (DataType dt, boost::shared_ptr<Playlist> p)
 		}
 	}
 
+	boost::shared_ptr<Playlist> old = _playlists[dt];
+
 	if (ret == 0) {
 		_playlists[dt] = p;
 	}
+
+	//allow all regions of prior and new playlists to update their visibility?
+	if (old)  old->foreach_region(update_region_visibility);
+	if (p)    p->foreach_region(update_region_visibility);
 
 	_session.set_dirty ();
 	PlaylistChanged (); /* EMIT SIGNAL */
@@ -742,7 +778,19 @@ Track::set_align_choice_from_io ()
 
 			connections.clear ();
 		}
+
+		/* Special case bounding the Metronome.
+		 * Click-out is aligned to output and hence
+		 * equivalent to a physical round-trip alike
+		 * ExistingMaterial.
+		 */
+		if (!have_physical && _session.click_io ()) {
+			if (_session.click_io ()->connected_to (_input)) {
+				have_physical = true;
+			}
+		}
 	}
+
 
 #ifdef MIXBUS
 	// compensate for latency when bouncing from master or mixbus.
@@ -814,9 +862,9 @@ Track::metering_state () const
 }
 
 bool
-Track::set_processor_state (XMLNode const & node, XMLProperty const* prop, ProcessorList& new_order, bool& must_configure)
+Track::set_processor_state (XMLNode const& node, int version, XMLProperty const* prop, ProcessorList& new_order, bool& must_configure)
 {
-	if (Route::set_processor_state (node, prop, new_order, must_configure)) {
+	if (Route::set_processor_state (node, version, prop, new_order, must_configure)) {
 		return true;
 	}
 
@@ -824,13 +872,13 @@ Track::set_processor_state (XMLNode const & node, XMLProperty const* prop, Proce
 
 	if (prop->value() == "diskreader") {
 		if (_disk_reader) {
-			_disk_reader->set_state (node, Stateful::current_state_version);
+			_disk_reader->set_state (node, version);
 			new_order.push_back (_disk_reader);
 			return true;
 		}
 	} else if (prop->value() == "diskwriter") {
 		if (_disk_writer) {
-			_disk_writer->set_state (node, Stateful::current_state_version);
+			_disk_writer->set_state (node, version);
 			new_order.push_back (_disk_writer);
 			return true;
 		}
@@ -941,15 +989,17 @@ Track::use_captured_midi_sources (SourceList& srcs, CaptureInfos const & capture
 		                                                      _name, (*ci)->start, (*ci)->samples, region_name));
 
 
-		// cerr << _name << ": based on ci of " << (*ci)->start << " for " << (*ci)->samples << " add a region\n";
+		// cerr << _name << ": based on ci of " << (*ci)->start << " for " << (*ci)->samples << " start: " << (*ci)->loop_offset << " add MIDI region\n";
 
 		try {
 			PropertyList plist;
 
 			/* start of this region is the offset between the start of its capture and the start of the whole pass */
-			plist.add (Properties::start, (*ci)->start - initial_capture);
+			samplecnt_t start_off = (*ci)->start - initial_capture + (*ci)->loop_offset;
+			plist.add (Properties::start, start_off);
 			plist.add (Properties::length, (*ci)->samples);
 			plist.add (Properties::length_beats, converter.from((*ci)->samples).to_double());
+			plist.add (Properties::start_beats, converter.from(start_off).to_double());
 			plist.add (Properties::name, region_name);
 
 			boost::shared_ptr<Region> rx (RegionFactory::create (srcs, plist));
@@ -985,20 +1035,6 @@ Track::use_captured_audio_sources (SourceList& srcs, CaptureInfos const & captur
 	boost::shared_ptr<AudioRegion> region;
 
 	if (!afs || !pl) {
-		return;
-	}
-
-	/* destructive tracks have a single, never changing region */
-
-	if (destructive()) {
-
-		/* send a signal that any UI can pick up to do the right thing. there is
-		   a small problem here in that a UI may need the peak data to be ready
-		   for the data that was recorded and this isn't interlocked with that
-		   process. this problem is deferred to the UI.
-		 */
-
-		pl->LayeringChanged(); // XXX this may not get the UI to do the right thing
 		return;
 	}
 
@@ -1078,5 +1114,3 @@ Track::use_captured_audio_sources (SourceList& srcs, CaptureInfos const & captur
 	pl->set_capture_insertion_in_progress (false);
 	_session.add_command (new StatefulDiffCommand (pl));
 }
-
-

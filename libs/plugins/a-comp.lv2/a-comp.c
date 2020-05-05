@@ -1,15 +1,21 @@
-/* a-comp
- * Copyright (C) 2016 Damien Zammit <damien@zamaudio.com>
+/*
+ * Copyright (C) 2016-2017 Damien Zammit <damien@zamaudio.com>
+ * Copyright (C) 2016-2017 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2017-2019 Johannes Mueller <github@johannes-mueller.org>
  *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 #include <math.h>
@@ -260,12 +266,12 @@ sanitize_denormal(float value) {
 
 static inline float
 from_dB(float gdb) {
-	return (exp(gdb/20.f*log(10.f)));
+	return powf (10.0f, 0.05f * gdb);
 }
 
 static inline float
 to_dB(float g) {
-	return (20.f*log10(g));
+	return (20.f * log10f (g));
 }
 
 static void
@@ -294,8 +300,8 @@ run(LV2_Handle instance, uint32_t n_samples)
 
 	float srate = acomp->srate;
 	float width = (6.f * *(acomp->knee)) + 0.01;
-	float attack_coeff = exp(-1000.f/(*(acomp->attack) * srate));
-	float release_coeff = exp(-1000.f/(*(acomp->release) * srate));
+	float attack_coeff = expf (-1000.f / (*(acomp->attack) * srate));
+	float release_coeff = expf (-1000.f / (*(acomp->release) * srate));
 
 	float max_out = 0.f;
 	float Lgain = 1.f;
@@ -317,7 +323,7 @@ run(LV2_Handle instance, uint32_t n_samples)
 	float makeup_target = from_dB(makeup);
 	float makeup_gain = acomp->makeup_gain;
 
-	const float tau = (1.0 - exp (-2.f * M_PI * 25.f / acomp->srate));
+	const float tau = (1.f - expf (-2.f * M_PI * 25.f / acomp->srate));
 
 	if (*acomp->enable <= 0) {
 		ratio = 1.f;
@@ -440,7 +446,7 @@ run(LV2_Handle instance, uint32_t n_samples)
 	if (acomp->v_gainr > knee_lim_gr) {
 		state_x = acomp->v_gainr / (1.f - 1.f/ratio) + thresdb;
 	} else {
-		state_x = sqrt ( (2.f*width*acomp->v_gainr) / (1.f-1.f/ratio) ) + thresdb - width/2.f;
+		state_x = sqrtf ( (2.f*width*acomp->v_gainr) / (1.f-1.f/ratio) ) + thresdb - width/2.f;
 	}
 
 	if (fabsf (acomp->v_lvl_out - v_lvl_out) >= .1f ||

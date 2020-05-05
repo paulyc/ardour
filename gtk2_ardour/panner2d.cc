@@ -1,21 +1,25 @@
 /*
-    Copyright (C) 2002 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2016 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2005 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2008-2011 David Robillard <d@drobilla.net>
+ * Copyright (C) 2010-2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015 Tim Mayberry <mojofunk@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <cmath>
 #include <climits>
@@ -129,6 +133,9 @@ Panner2d::set_colors ()
 	colors.signal_fill =         0x4884a9bf; // 0.282, 0.517, 0.662, 0.75
 	colors.speaker_fill =        0x4884a9ff; // 0.282, 0.517, 0.662, 1.0
 	colors.text =                0x84c5e1e6; // 0.517, 0.772, 0.882, 0.9
+
+	colors.send_bg  = UIConfiguration::instance().color ("send bg");
+	colors.send_pan = UIConfiguration::instance().color ("send pan");
 }
 
 void
@@ -252,7 +259,7 @@ Panner2d::handle_state_change ()
 
 	panner_shell->panner()->SignalPositionChanged.connect (panner_connections, invalidator(*this), boost::bind (&Panner2d::handle_position_change, this), gui_context());
 
-	set<Evoral::Parameter> params = panner_shell->panner()->what_can_be_automated();
+	set<Evoral::Parameter> params = panner_shell->pannable()->what_can_be_automated();
 	set<Evoral::Parameter>::iterator p = params.find(PanElevationAutomation);
 	bool elev = have_elevation;
 	have_elevation = (p == params.end()) ? false : true;
@@ -471,10 +478,7 @@ Panner2d::on_expose_event (GdkEventExpose *event)
 
 	cairo_rectangle (cr, event->area.x, event->area.y, event->area.width, event->area.height);
 
-	uint32_t bg = colors.background;
-	if (_send_mode) {
-		bg = UIConfiguration::instance().color ("send bg");
-	}
+	uint32_t bg = _send_mode ? colors.send_bg : colors.background;
 
 	if (!panner_shell->bypassed()) {
 		CSSRGBA(bg);
@@ -594,7 +598,11 @@ Panner2d::on_expose_event (GdkEventExpose *event)
 
 					cairo_new_path (cr);
 					cairo_arc (cr, c.x, c.y, arc_radius, 0, 2.0 * M_PI);
-					CSSRGBA(colors.signal_fill);
+					if (_send_mode && !panner_shell->is_linked_to_route()) {
+						CSSRGBA(colors.send_pan);
+					} else {
+						CSSRGBA(colors.signal_fill);
+					}
 					cairo_fill_preserve (cr);
 					CSSRGBA(colors.signal_outline);
 					cairo_stroke (cr);
@@ -924,7 +932,7 @@ Panner2dWindow::Panner2dWindow (boost::shared_ptr<PannerShell> p, int32_t h, uin
 	left_side.pack_start (button_box, false, false);
 
 	Gtk::Label* l = manage (new Label (
-				p->panner()->describe_parameter(PanWidthAutomation),
+				p->pannable()->describe_parameter(PanWidthAutomation),
 				Gtk::ALIGN_LEFT, Gtk::ALIGN_CENTER, false));
 	spinner_box.pack_start (*l, false, false);
 	spinner_box.pack_start (width_spinner, false, false);
@@ -993,7 +1001,7 @@ Panner2dWindow::set_bypassed ()
 		bypass_button.set_active(model);
 	}
 
-	set<Evoral::Parameter> params = widget.get_panner_shell()->panner()->what_can_be_automated();
+	set<Evoral::Parameter> params = widget.get_panner_shell()->pannable()->what_can_be_automated();
 	set<Evoral::Parameter>::iterator p = params.find(PanWidthAutomation);
 	if (p == params.end()) {
 		spinner_box.set_sensitive(false);

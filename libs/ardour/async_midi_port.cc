@@ -1,22 +1,23 @@
 /*
-    Copyright (C) 1998 Paul Barton-Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-    $Id$
-*/
+ * Copyright (C) 1998-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2013-2014 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2014-2016 David Robillard <d@drobilla.net>
+ * Copyright (C) 2015-2016 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <iostream>
 #include <vector>
@@ -130,23 +131,35 @@ AsyncMIDIPort::cycle_start (MIDI::pframes_t nframes)
 	*/
 
 	if (ARDOUR::Port::receives_input()) {
-		MidiBuffer& mb (get_midi_buffer (nframes));
-		samplecnt_t when;
 
-		if (have_timer) {
-			when = timer ();
-		} else {
-			when = AudioEngine::instance()->sample_time_at_cycle_start();
-		}
+		void* buffer = port_engine.get_buffer (_port_handle, nframes);
+		const pframes_t event_count = port_engine.get_midi_event_count (buffer);
 
-		for (MidiBuffer::iterator b = mb.begin(); b != mb.end(); ++b) {
-			if (!have_timer) {
-				when += (*b).time();
+		for (pframes_t i = 0; i < event_count; ++i) {
+
+			pframes_t timestamp;
+			size_t size;
+			uint8_t const* buf;
+
+			port_engine.midi_event_get (timestamp, size, &buf, buffer, i);
+
+			if (buf[0] == 0xfe) {
+				/* throw away active sensing */
+				continue;
 			}
-			input_fifo.write (when, Evoral::NO_EVENT, (*b).size(), (*b).buffer());
+
+			samplecnt_t when;
+
+			if (have_timer) {
+				when = timer ();
+			} else {
+				when = AudioEngine::instance()->sample_time_at_cycle_start() + timestamp;
+			}
+
+			input_fifo.write (when, Evoral::NO_EVENT, size, buf);
 		}
 
-		if (!mb.empty()) {
+		if (event_count) {
 			_xthread.wakeup ();
 		}
 
@@ -345,4 +358,3 @@ AsyncMIDIPort::is_process_thread()
 {
 	return pthread_equal (pthread_self(), _process_thread);
 }
-

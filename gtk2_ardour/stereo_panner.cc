@@ -1,20 +1,23 @@
 /*
-  Copyright (C) 2000-2007 Paul Davis
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2010-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2010-2016 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2012-2017 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015 Tim Mayberry <mojofunk@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <iostream>
 #include <iomanip>
@@ -54,7 +57,10 @@ using namespace ARDOUR_UI_UTILS;
 using PBD::Controllable;
 
 StereoPanner::ColorScheme StereoPanner::colors[3];
-bool StereoPanner::have_colors = false;
+
+uint32_t StereoPanner::colors_send_bg;
+uint32_t StereoPanner::colors_send_pan;
+bool     StereoPanner::have_colors = false;
 
 Pango::AttrList StereoPanner::panner_font_attributes;
 bool            StereoPanner::have_font = false;
@@ -171,6 +177,10 @@ StereoPanner::on_expose_event (GdkEventExpose*)
 	b = colors[state].background;
 	r = colors[state].rule;
 
+	if (_send_mode) {
+		b = colors_send_bg;
+	}
+
 	if (_panner_shell->bypassed()) {
 		b  = 0x20202040;
 		f  = 0x404040ff;
@@ -179,12 +189,6 @@ StereoPanner::on_expose_event (GdkEventExpose*)
 		r  = 0x606060ff;
 	}
 
-	if (_send_mode) {
-		b = UIConfiguration::instance().color ("send bg");
-		// b = rgba_from_style("SendStripBase",
-		// UINT_RGBA_R(b), UINT_RGBA_G(b), UINT_RGBA_B(b), 255,
-		// "fg");
-	}
 	/* background */
 
 	context->set_source_rgba (UINT_RGBA_R_FLT(b), UINT_RGBA_G_FLT(b), UINT_RGBA_B_FLT(b), UINT_RGBA_A_FLT(b));
@@ -288,6 +292,10 @@ StereoPanner::on_expose_event (GdkEventExpose*)
 	context->rel_line_to (-pos_box_size/2.0, -4.0); /* lower left */
 	context->rel_line_to (0.0, -pos_box_size); /* upper left */
 	context->close_path ();
+
+	if (_send_mode && !_panner_shell->is_linked_to_route()) {
+		f = colors_send_pan;
+	}
 
 	context->set_source_rgba (UINT_RGBA_R_FLT(o), UINT_RGBA_G_FLT(o), UINT_RGBA_B_FLT(o), UINT_RGBA_A_FLT(o));
 	context->stroke_preserve ();
@@ -672,9 +680,8 @@ StereoPanner::on_key_press_event (GdkEventKey* ev)
 void
 StereoPanner::set_colors ()
 {
-	colors[Normal].fill = UIConfiguration::instance().color_mod ("stereo panner fill", "panner fill");
-	// colors[Normal].outline = UIConfiguration::instance().color ("stereo panner outline");
-	colors[Normal].outline = Gtkmm2ext::HSV (colors[Normal].fill).outline().color ();
+	colors[Normal].fill = UIConfiguration::instance().color ("stereo panner fill");
+	colors[Normal].outline = UIConfiguration::instance().color ("stereo panner outline");
 	colors[Normal].text = UIConfiguration::instance().color ("stereo panner text");
 	colors[Normal].background = UIConfiguration::instance().color ("stereo panner bg");
 	colors[Normal].rule = UIConfiguration::instance().color ("stereo panner rule");
@@ -685,11 +692,14 @@ StereoPanner::set_colors ()
 	colors[Mono].background = UIConfiguration::instance().color ("stereo panner mono bg");
 	colors[Mono].rule = UIConfiguration::instance().color ("stereo panner rule");
 
-	colors[Inverted].fill = UIConfiguration::instance().color_mod ("stereo panner inverted fill", "stereo panner inverted");
+	colors[Inverted].fill = UIConfiguration::instance().color ("stereo panner inverted fill");
 	colors[Inverted].outline = UIConfiguration::instance().color ("stereo panner inverted outline");
 	colors[Inverted].text = UIConfiguration::instance().color ("stereo panner inverted text");
-	colors[Inverted].background = UIConfiguration::instance().color_mod ("stereo panner inverted bg", "stereo panner inverted bg");
+	colors[Inverted].background = UIConfiguration::instance().color ("stereo panner inverted bg");
 	colors[Inverted].rule = UIConfiguration::instance().color ("stereo panner rule");
+
+	colors_send_bg  = UIConfiguration::instance().color ("send bg");
+	colors_send_pan =  UIConfiguration::instance().color ("send pan");
 }
 
 void

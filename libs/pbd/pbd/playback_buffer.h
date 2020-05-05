@@ -2,19 +2,19 @@
  * Copyright (C) 2000 Paul Davis & Benno Senoner
  * Copyright (C) 2019 Robin Gareus <robin@gareus.org>
  *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 #ifndef playback_buffer_h
@@ -41,7 +41,6 @@ public:
 
 	PlaybackBuffer (guint sz, guint res = 8191)
 	: reservation (res)
-	, _reservation_lock ()
 	{
 		sz += reservation;
 		size = power_of_two_size (sz);
@@ -66,8 +65,18 @@ public:
 		/* writer, when seeking, may block */
 		Glib::Threads::Mutex::Lock lm (_reset_lock);
 		SpinLock sl (_reservation_lock);
-		g_atomic_int_set (&write_idx, g_atomic_int_get (&read_idx));
+		g_atomic_int_set (&read_idx, 0);
+		g_atomic_int_set (&write_idx, 0);
 		g_atomic_int_set (&reserved, 0);
+	}
+
+	/* called from rt (reader) thread for new buffers */
+	void align_to (PlaybackBuffer const& other) {
+		Glib::Threads::Mutex::Lock lm (_reset_lock);
+		write_idx = other.write_idx;
+		read_idx  = other.read_idx;
+		reserved  = other.reserved;
+		memset (buf, 0, size * sizeof (T));
 	}
 
 	/* write-thread */
@@ -120,13 +129,12 @@ public:
 	guint write (T const * src, guint cnt);
 	/* write-thead */
 	guint write_zero (guint cnt);
-
 	/* read-thead */
-	void read_flush ()
+	guint increment_write_ptr (guint cnt)
 	{
-		SpinLock sl (_reservation_lock);
-		g_atomic_int_set (&read_idx, g_atomic_int_get (&write_idx));
-		g_atomic_int_set (&reserved, 0);
+		cnt = std::min (cnt, write_space ());
+		g_atomic_int_set (&write_idx, (g_atomic_int_get (&write_idx) + cnt) & size_mask);
+		return cnt;
 	}
 
 	/* read-thead */
@@ -163,18 +171,20 @@ public:
 	bool can_seek (int64_t cnt) {
 		if (cnt > 0) {
 			return read_space() >= cnt;
-		}
-		else if (cnt < 0) {
-			return g_atomic_int_get (&reserved) >= cnt;
-		}
-		else {
+		} else if (cnt < 0) {
+			return g_atomic_int_get (&reserved) >= -cnt;
+		} else {
 			return true;
 		}
 	}
 
+	guint read_ptr() const { return read_idx; }
+	guint reserved_size() const { return reserved; }
+	guint reservation_size() const { return reservation; }
+
 private:
 	T *buf;
-	guint reservation;
+	const guint reservation;
 	guint size;
 	guint size_mask;
 

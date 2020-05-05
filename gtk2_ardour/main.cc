@@ -1,21 +1,29 @@
 /*
-    Copyright (C) 2001-2012 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2006 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2005-2007 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2005-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2011 David Robillard <d@drobilla.net>
+ * Copyright (C) 2006-2015 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2006 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2008-2009 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2013-2017 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <cstdlib>
 #include <cerrno>
@@ -26,10 +34,6 @@
 
 #include <sigc++/bind.h>
 #include <gtkmm/settings.h>
-
-#ifdef HAVE_FFTW35F
-#include <fftw3.h>
-#endif
 
 #include <curl/curl.h>
 
@@ -55,6 +59,7 @@
 #include <gtkmm2ext/application.h>
 #include <gtkmm2ext/utils.h>
 
+#include "ardour_message.h"
 #include "ardour_ui.h"
 #include "ui_config.h"
 #include "opts.h"
@@ -92,10 +97,10 @@ static string localedir (LOCALEDIR);
 void
 gui_jack_error ()
 {
-	MessageDialog win (string_compose (_("%1 could not connect to the audio backend."), PROGRAM_NAME),
-	                   false,
-	                   Gtk::MESSAGE_INFO,
-	                   Gtk::BUTTONS_NONE);
+	ArdourMessageDialog win (string_compose (_("%1 could not connect to the audio backend."), PROGRAM_NAME),
+	                         false,
+	                         Gtk::MESSAGE_INFO,
+	                         Gtk::BUTTONS_NONE);
 
 	win.add_button (Stock::QUIT, RESPONSE_CLOSE);
 	win.set_default_response (RESPONSE_CLOSE);
@@ -139,7 +144,7 @@ tell_about_backend_death (void* /* ignored */)
 {
 	if (AudioEngine::instance()->processed_samples() == 0) {
 		/* died during startup */
-		MessageDialog msg (string_compose (_("The audio backend (%1) has failed, or terminated"), AudioEngine::instance()->current_backend_name()), false);
+		ArdourMessageDialog msg (string_compose (_("The audio backend (%1) has failed, or terminated"), AudioEngine::instance()->current_backend_name()), false);
 		msg.set_position (Gtk::WIN_POS_CENTER);
 		msg.set_secondary_text (string_compose (_(
 "%2 exited unexpectedly, and without notifying %1.\n\
@@ -149,16 +154,16 @@ This could be due to misconfiguration or to an error inside %2.\n\
 Click OK to exit %1."), PROGRAM_NAME, AudioEngine::instance()->current_backend_name()));
 
 		msg.run ();
-		_exit (0);
+		_exit (EXIT_SUCCESS);
 
 	} else {
 
 		/* engine has already run, so this is a mid-session backend death */
 
-		MessageDialog msg (string_compose (_("The audio backend (%1) has failed, or terminated"), AudioEngine::instance()->current_backend_name()), false);
+		ArdourMessageDialog msg (string_compose (_("The audio backend (%1) has failed, or terminated"), AudioEngine::instance()->current_backend_name()), false);
 		msg.set_secondary_text (string_compose (_("%2 exited unexpectedly, and without notifying %1."),
 							 PROGRAM_NAME, AudioEngine::instance()->current_backend_name()));
-		msg.present ();
+		msg.run ();
 	}
 	return false; /* do not call again */
 }
@@ -251,7 +256,7 @@ static void command_line_parse_error (int *argc, char** argv[]) {
 	// an MSVC app, let the user know we encountered a parsing error.
 	Gtk::Main app(argc, argv); // Calls 'gtk_init()'
 
-	Gtk::MessageDialog dlgReportParseError (string_compose (_("\n   %1 could not understand your command line      "), PROGRAM_NAME),
+	ArdourMessageDialog dlgReportParseError (string_compose (_("\n   %1 could not understand your command line      "), PROGRAM_NAME),
 			false, MESSAGE_ERROR, BUTTONS_CLOSE, true);
 	dlgReportParseError.set_title (string_compose (_("An error was encountered while launching %1"), PROGRAM_NAME));
 	dlgReportParseError.run ();
@@ -307,14 +312,12 @@ int main (int argc, char *argv[])
 	XInitThreads ();
 #endif
 
-#ifdef HAVE_FFTW35F
-	fftwf_make_planner_thread_safe ();
-#endif
-
 #if ENABLE_NLS
 	/* initialize C locale to user preference */
 	if (ARDOUR::translations_are_enabled ()) {
-		setlocale (LC_ALL, "");
+		if (!setlocale (LC_ALL, "")) {
+			std::cerr << "localization call failed, " << PROGRAM_NAME << " will not be translated\n";
+		}
 	}
 #endif
 
@@ -328,7 +331,10 @@ int main (int argc, char *argv[])
 #endif
 
 #if ENABLE_NLS
+
+#ifndef NDEBUG
 	cerr << "bind txt domain [" << PACKAGE << "] to " << localedir << endl;
+#endif
 
 	(void) bindtextdomain (PACKAGE, localedir.c_str());
 	/* our i18n translations are all in UTF-8, so make sure
@@ -355,7 +361,16 @@ int main (int argc, char *argv[])
 
 	if (parse_opts (argc, argv)) {
 		command_line_parse_error (&argc, &argv);
-		exit (1);
+		exit (EXIT_FAILURE);
+	}
+
+	{
+#ifndef NDEBUG
+		const char *adf;
+		if ((adf = g_getenv ("ARDOUR_DEBUG_FLAGS"))) {
+			PBD::parse_debug_options (adf);
+		}
+#endif /* NDEBUG */
 	}
 
 	cout << PROGRAM_NAME
@@ -369,11 +384,11 @@ int main (int argc, char *argv[])
 	     << endl;
 
 	if (just_version) {
-		exit (0);
+		exit (EXIT_SUCCESS);
 	}
 
 	if (no_splash) {
-		cerr << _("Copyright (C) 1999-2019 Paul Davis") << endl
+		cout << _("Copyright (C) 1999-2020 Paul Davis") << endl
 		     << _("Some portions Copyright (C) Steve Harris, Ari Johnson, Brett Viren, Joel Baker, Robin Gareus") << endl
 		     << endl
 		     << string_compose (_("%1 comes with ABSOLUTELY NO WARRANTY"), PROGRAM_NAME) << endl
@@ -383,18 +398,14 @@ int main (int argc, char *argv[])
 		     << endl;
 	}
 
-	if (!ARDOUR::init (ARDOUR_COMMAND_LINE::use_vst, ARDOUR_COMMAND_LINE::try_hw_optimization, localedir.c_str())) {
+	if (!ARDOUR::init (ARDOUR_COMMAND_LINE::use_vst, ARDOUR_COMMAND_LINE::try_hw_optimization, localedir.c_str(), true)) {
 		error << string_compose (_("could not initialize %1."), PROGRAM_NAME) << endmsg;
 		Gtk::Main main (argc, argv);
 		Gtk::MessageDialog msg (string_compose (_("Could not initialize %1 (likely due to corrupt config files).\n"
 		                                          "Run %1 from a commandline for more information."), PROGRAM_NAME),
 		                        false, Gtk::MESSAGE_ERROR , Gtk::BUTTONS_OK, true);
 		msg.run ();
-		exit (1);
-	}
-
-	if (curvetest_file) {
-		return curvetest (curvetest_file);
+		exit (EXIT_FAILURE);
 	}
 
 #ifndef PLATFORM_WINDOWS
@@ -407,14 +418,14 @@ int main (int argc, char *argv[])
 
 	if (UIConfiguration::instance().pre_gui_init ()) {
 		error << _("Could not complete pre-GUI initialization") << endmsg;
-		exit (1);
+		exit (EXIT_FAILURE);
 	}
 
 	try {
 		ui = new ARDOUR_UI (&argc, &argv, localedir.c_str());
 	} catch (failed_constructor& err) {
 		error << string_compose (_("could not create %1 GUI"), PROGRAM_NAME) << endmsg;
-		exit (1);
+		exit (EXIT_FAILURE);
 	}
 
 #ifndef NDEBUG

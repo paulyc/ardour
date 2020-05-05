@@ -1,21 +1,29 @@
 /*
-    Copyright (C) 2000-2004 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2006 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2005-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2007 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2007-2012 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2016 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2013-2015 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2014-2018 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2016-2018 Len Ovens <len@ovenwerks.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifdef WAF_BUILD
 #include "gtk2ardour-config.h"
@@ -30,6 +38,7 @@
 #include <glibmm/threads.h>
 
 #include <gtkmm/accelmap.h>
+#include <gtkmm/offscreenwindow.h>
 #include <gtkmm/stock.h>
 
 #include "pbd/convert.h"
@@ -38,8 +47,11 @@
 
 #include "ardour/amp.h"
 #include "ardour/debug.h"
+#include "ardour/audio_port.h"
 #include "ardour/audio_track.h"
 #include "ardour/midi_track.h"
+#include "ardour/monitor_control.h"
+#include "ardour/panner_shell.h"
 #include "ardour/plugin_manager.h"
 #include "ardour/route_group.h"
 #include "ardour/selection.h"
@@ -55,6 +67,7 @@
 
 #include "widgets/tearoff.h"
 
+#include "foldback_strip.h"
 #include "keyboard.h"
 #include "mixer_ui.h"
 #include "mixer_strip.h"
@@ -99,11 +112,13 @@ Mixer_UI::instance ()
 }
 
 Mixer_UI::Mixer_UI ()
-	: Tabbable (_content, _("Mixer"))
+	: Tabbable (_content, _("Mixer"), X_("mixer"))
 	, no_track_list_redisplay (false)
 	, in_group_row_change (false)
 	, track_menu (0)
 	, _plugin_selector (0)
+	, foldback_strip (0)
+	, _show_foldback_strip (true)
 	, _strip_width (UIConfiguration::instance().get_default_narrow_ms() ? Narrow : Wide)
 	, _spill_scroll_position (0)
 	, ignore_reorder (false)
@@ -115,9 +130,13 @@ Mixer_UI::Mixer_UI ()
 {
 	load_bindings ();
 	register_actions ();
+	Glib::RefPtr<ToggleAction> fb_act = ActionManager::get_toggle_action ("Mixer", "ToggleFoldbackStrip");
+	fb_act->set_sensitive (false);
+
 	_content.set_data ("ardour-bindings", bindings);
 
 	PresentationInfo::Change.connect (*this, invalidator (*this), boost::bind (&Mixer_UI::presentation_info_changed, this, _1), gui_context());
+	Route::FanOut.connect (*this, invalidator (*this), boost::bind (&Mixer_UI::fan_out, this, _1, false, true), gui_context());
 
 	scroller.set_can_default (true);
 	// set_default (scroller);
@@ -160,15 +179,14 @@ Mixer_UI::Mixer_UI ()
 #endif
 
 	_group_tabs = new MixerGroupTabs (this);
-	VBox* b = manage (new VBox);
-	b->set_spacing (0);
-	b->set_border_width (0);
-	b->pack_start (*_group_tabs, PACK_SHRINK);
-	b->pack_start (strip_packer);
-	b->show_all ();
-	b->signal_scroll_event().connect (sigc::mem_fun (*this, &Mixer_UI::on_scroll_event), false);
+	strip_group_box.set_spacing (0);
+	strip_group_box.set_border_width (0);
+	strip_group_box.pack_start (*_group_tabs, PACK_SHRINK);
+	strip_group_box.pack_start (strip_packer);
+	strip_group_box.show_all ();
+	strip_group_box.signal_scroll_event().connect (sigc::mem_fun (*this, &Mixer_UI::on_scroll_event), false);
 
-	scroller.add (*b);
+	scroller.add (strip_group_box);
 	scroller.set_policy (Gtk::POLICY_ALWAYS, Gtk::POLICY_AUTOMATIC);
 
 	setup_track_display ();
@@ -355,6 +373,7 @@ Mixer_UI::Mixer_UI ()
 
 	MixerStrip::CatchDeletion.connect (*this, invalidator (*this), boost::bind (&Mixer_UI::remove_strip, this, _1), gui_context());
 	VCAMasterStrip::CatchDeletion.connect (*this, invalidator (*this), boost::bind (&Mixer_UI::remove_master, this, _1), gui_context());
+	FoldbackStrip::CatchDeletion.connect (*this, invalidator (*this), boost::bind (&Mixer_UI::remove_foldback, this, _1), gui_context());
 
 	/* handle escape */
 
@@ -375,6 +394,8 @@ Mixer_UI::~Mixer_UI ()
 {
 	monitor_section_detached ();
 
+	delete foldback_strip;
+	foldback_strip = 0;
 	delete _plugin_selector;
 	delete track_menu;
 }
@@ -591,6 +612,28 @@ Mixer_UI::add_stripables (StripableList& slist)
 
 					continue;
 				}
+				if (route->is_foldbackbus ()) {
+					if (foldback_strip) {
+						// last strip created is shown
+						foldback_strip->set_route (route);
+						foldback_strip->prev_next_changed();
+					} else {
+						foldback_strip = new FoldbackStrip (*this, _session, route);
+						out_packer.pack_start (*foldback_strip, false, false);
+						// change 0 to 1 below for foldback to right of master
+						out_packer.reorder_child (*foldback_strip, 0);
+						foldback_strip->set_packed (true);
+					}
+					/* config from last run is set before there are any foldback strips
+					 * this takes that setting and applies it after at least one foldback
+					 * strip exists */
+					bool yn = _show_foldback_strip;
+					Glib::RefPtr<ToggleAction> act = ActionManager::get_toggle_action ("Mixer", "ToggleFoldbackStrip");
+					act->set_sensitive (true);
+					act->set_active(!yn);
+					act->set_active(yn);
+					continue;
+				}
 
 				strip = new MixerStrip (*this, _session, route);
 				strips.push_back (strip);
@@ -705,6 +748,21 @@ Mixer_UI::remove_strip (MixerStrip* strip)
 			break;
 		}
 	}
+}
+
+void
+Mixer_UI::remove_foldback (FoldbackStrip* strip)
+{
+	if (_session && _session->deletion_in_progress()) {
+		/* its all being taken care of */
+		return;
+	}
+	Glib::RefPtr<ToggleAction> act = ActionManager::get_toggle_action ("Mixer", "ToggleFoldbackStrip");
+	act->set_sensitive (false);
+	if (foldback_strip) {
+		foldback_strip->destroy_();
+	}
+	foldback_strip = 0;
 }
 
 void
@@ -873,6 +931,113 @@ Mixer_UI::sync_treeview_from_presentation_info (PropertyChange const & what_chan
 	redisplay_track_list ();
 }
 
+void
+Mixer_UI::fan_out (boost::weak_ptr<Route> wr, bool to_busses, bool group)
+{
+	boost::shared_ptr<ARDOUR::Route> route = wr.lock ();
+
+	if (!ARDOUR_UI_UTILS::engine_is_running () || ! route) {
+		return;
+	}
+
+	DisplaySuspender ds;
+	boost::shared_ptr<PluginInsert> pi = boost::dynamic_pointer_cast<PluginInsert> (route->the_instrument ());
+	assert (pi);
+
+	const uint32_t n_outputs = pi->output_streams ().n_audio ();
+	if (route->n_outputs ().n_audio () != n_outputs) {
+		MessageDialog msg (string_compose (
+					_("The Plugin's number of audio outputs ports (%1) does not match the Tracks's number of audio outputs (%2). Cannot fan out."),
+					n_outputs, route->n_outputs ().n_audio ()));
+		msg.run ();
+		return;
+	}
+
+#define BUSNAME  pd.group_name + "(" + route->name () + ")"
+
+	/* count busses and channels/bus */
+	boost::shared_ptr<Plugin> plugin = pi->plugin ();
+	std::map<std::string, uint32_t> busnames;
+	for (uint32_t p = 0; p < n_outputs; ++p) {
+		const Plugin::IOPortDescription& pd (plugin->describe_io_port (DataType::AUDIO, false, p));
+		std::string bn = BUSNAME;
+		busnames[bn]++;
+	}
+
+	if (busnames.size () < 2) {
+		MessageDialog msg (_("Instrument has only 1 output bus. Nothing to fan out."));
+		msg.run ();
+		return;
+	}
+
+	uint32_t outputs = 2;
+	if (_session->master_out ()) {
+		outputs = std::max (outputs, _session->master_out ()->n_inputs ().n_audio ());
+	}
+
+	route->output ()->disconnect (this);
+	route->panner_shell ()->set_bypassed (true);
+
+	boost::shared_ptr<AutomationControl> msac = route->master_send_enable_controllable ();
+	if (msac) {
+		msac->start_touch (msac->session().transport_sample());
+		msac->set_value (0, PBD::Controllable::NoGroup);
+	}
+
+	RouteList to_group;
+	for (uint32_t p = 0; p < n_outputs; ++p) {
+		const Plugin::IOPortDescription& pd (plugin->describe_io_port (DataType::AUDIO, false, p));
+		std::string bn = BUSNAME;
+		boost::shared_ptr<Route> r = _session->route_by_name (bn);
+		if (!r) {
+			try {
+				if (to_busses) {
+					RouteList rl = _session->new_audio_route (busnames[bn], outputs, NULL, 1, bn, PresentationInfo::AudioBus, PresentationInfo::max_order);
+					r = rl.front ();
+					assert (r);
+				} else {
+					list<boost::shared_ptr<AudioTrack> > tl = _session->new_audio_track (busnames[bn], outputs, NULL, 1, bn, PresentationInfo::max_order, Normal, false);
+					r = tl.front ();
+					assert (r);
+
+					boost::shared_ptr<ControlList> cl (new ControlList);
+					cl->push_back (r->monitoring_control ());
+					_session->set_controls (cl, (double) MonitorInput, Controllable::NoGroup);
+				}
+			} catch (...) {
+				if (!to_group.empty()) {
+					boost::shared_ptr<RouteList> rl (&to_group);
+					_session->remove_routes (rl);
+				}
+				return;
+			}
+		}
+		to_group.push_back (r);
+		route->output ()->audio (p)->connect (r->input ()->audio (pd.group_channel).get());
+	}
+#undef BUSNAME
+
+	if (group) {
+		RouteGroup* rg = NULL;
+		const std::list<RouteGroup*>& rgs (_session->route_groups ());
+		for (std::list<RouteGroup*>::const_iterator i = rgs.begin (); i != rgs.end (); ++i) {
+			if ((*i)->name () == pi->name ()) {
+				rg = *i;
+				break;
+			}
+		}
+		if (!rg) {
+			rg = new RouteGroup (*_session, pi->name ());
+			_session->add_route_group (rg);
+			rg->set_gain (false);
+		}
+
+		GroupTabs::set_group_color (rg, route->presentation_info().color());
+		for (RouteList::const_iterator i = to_group.begin(); i != to_group.end(); ++i) {
+			rg->add (*i);
+		}
+	}
+}
 
 MixerStrip*
 Mixer_UI::strip_by_route (boost::shared_ptr<Route> r) const
@@ -1102,6 +1267,14 @@ Mixer_UI::session_going_away ()
 	}
 
 	_monitor_section.tearoff().hide_visible ();
+	StripableList fb;
+	_session->get_stripables (fb, PresentationInfo::FoldbackBus);
+	if (fb.size()) {
+		if (foldback_strip) {
+			delete foldback_strip;
+			foldback_strip = 0;
+		}
+	}
 
 	monitor_section_detached ();
 
@@ -1149,9 +1322,7 @@ Mixer_UI::update_track_visibility ()
 			(*i)[stripable_columns.visible] = av->marked_for_display ();
 		}
 
-		/* force presentation catch up with visibility changes
-		 */
-
+		/* force presentation to catch up with visibility changes */
 		sync_presentation_info_from_treeview ();
 	}
 
@@ -1244,11 +1415,13 @@ Mixer_UI::set_all_strips_visibility (bool yn)
 
 			(*i)[stripable_columns.visible] = yn;
 		}
+
+		/* force presentation to catch up with visibility changes */
+		sync_presentation_info_from_treeview ();
 	}
 
 	redisplay_track_list ();
 }
-
 
 void
 Mixer_UI::set_all_audio_midi_visibility (int tracks, bool yn)
@@ -1299,6 +1472,9 @@ Mixer_UI::set_all_audio_midi_visibility (int tracks, bool yn)
 				break;
 			}
 		}
+
+		/* force presentation to catch up with visibility changes */
+		sync_presentation_info_from_treeview ();
 	}
 
 	redisplay_track_list ();
@@ -1375,17 +1551,24 @@ Mixer_UI::track_list_delete (const Gtk::TreeModel::Path&)
 }
 
 void
-Mixer_UI::spill_redisplay (boost::shared_ptr<VCA> vca)
+Mixer_UI::spill_redisplay (boost::shared_ptr<Stripable> s)
 {
+
+	boost::shared_ptr<VCA> vca = boost::dynamic_pointer_cast<VCA> (s);
+	boost::shared_ptr<Route> r = boost::dynamic_pointer_cast<Route> (s);
+
 	TreeModel::Children rows = track_model->children();
 	std::list<boost::shared_ptr<VCA> > vcas;
-	vcas.push_back (vca);
 
-	for (TreeModel::Children::const_iterator i = rows.begin(); i != rows.end(); ++i) {
-		AxisView* av = (*i)[stripable_columns.strip];
-		VCAMasterStrip* vms = dynamic_cast<VCAMasterStrip*> (av);
-		if (vms && vms->vca()->slaved_to (vca)) {
-			vcas.push_back (vms->vca());
+	if (vca) {
+		vcas.push_back (vca);
+
+		for (TreeModel::Children::const_iterator i = rows.begin(); i != rows.end(); ++i) {
+			AxisView* av = (*i)[stripable_columns.strip];
+			VCAMasterStrip* vms = dynamic_cast<VCAMasterStrip*> (av);
+			if (vms && vms->vca()->slaved_to (vca)) {
+				vcas.push_back (vms->vca());
+			}
 		}
 	}
 
@@ -1394,6 +1577,8 @@ Mixer_UI::spill_redisplay (boost::shared_ptr<VCA> vca)
 		AxisView* av = (*i)[stripable_columns.strip];
 		MixerStrip* strip = dynamic_cast<MixerStrip*> (av);
 		bool const visible = (*i)[stripable_columns.visible];
+		bool slaved = false;
+		bool feeds = false;
 
 		if (!strip) {
 			/* we're in the middle of changing a row, don't worry */
@@ -1409,15 +1594,23 @@ Mixer_UI::spill_redisplay (boost::shared_ptr<VCA> vca)
 			continue;
 		}
 
-		bool slaved = false;
-		for (std::list<boost::shared_ptr<VCA> >::const_iterator m = vcas.begin(); m != vcas.end(); ++m) {
-			if (strip->route()->slaved_to (*m)) {
-				slaved = true;
-				break;
+		if (vca) {
+			for (std::list<boost::shared_ptr<VCA> >::const_iterator m = vcas.begin(); m != vcas.end(); ++m) {
+				if (strip->route()->slaved_to (*m)) {
+					slaved = true;
+					break;
+				}
 			}
 		}
 
-		if (slaved && visible) {
+		if (r) {
+			feeds = strip->route()->feeds (r);
+		}
+
+		bool should_show = visible && (slaved || feeds);
+		should_show |= (strip->route() == r);  //the spilled aux should itself be shown...
+
+		if (should_show) {
 
 			if (strip->packed()) {
 				strip_packer.reorder_child (*strip, -1); /* put at end */
@@ -1451,6 +1644,12 @@ Mixer_UI::redisplay_track_list ()
 				_spill_scroll_position = scroller.get_hscrollbar()->get_adjustment()->get_value();
 			}
 			spill_redisplay (sv);
+			return;
+		} else {
+			if (_spill_scroll_position <= 0 && scroller.get_hscrollbar()) {
+				_spill_scroll_position = scroller.get_hscrollbar()->get_adjustment()->get_value();
+			}
+			spill_redisplay (ss);
 			return;
 		}
 	}
@@ -1597,7 +1796,13 @@ void
 Mixer_UI::initial_track_display ()
 {
 	StripableList sl;
+	StripableList fb;
 	_session->get_stripables (sl);
+	_session->get_stripables (fb, PresentationInfo::FoldbackBus);
+	if (fb.size()) {
+		boost::shared_ptr<ARDOUR::Stripable> _current_foldback = *(fb.begin());
+		sl.push_back (_current_foldback);
+	}
 
 	sl.sort (PresentationInfoMixerSorter());
 
@@ -2009,6 +2214,28 @@ Mixer_UI::showhide_monitor_section (bool yn)
 }
 
 void
+Mixer_UI::toggle_foldback_strip ()
+{
+	Glib::RefPtr<ToggleAction> act = ActionManager::get_toggle_action ("Mixer", "ToggleFoldbackStrip");
+	showhide_foldback_strip (act->get_active());
+}
+
+
+void
+Mixer_UI::showhide_foldback_strip (bool yn)
+{
+	_show_foldback_strip = yn;
+
+	if (foldback_strip) {
+		if (yn) {
+			foldback_strip->show();
+		} else {
+			foldback_strip->hide();
+		}
+	}
+}
+
+void
 Mixer_UI::toggle_vcas ()
 {
 	Glib::RefPtr<ToggleAction> act = ActionManager::get_toggle_action ("Mixer", "ToggleVCAPane");
@@ -2270,6 +2497,15 @@ Mixer_UI::set_state (const XMLNode& node, int version)
 	}
 
 	yn = true;
+	node.get_property ("foldback-strip-visible", yn);
+	{
+		Glib::RefPtr<ToggleAction> act = ActionManager::get_toggle_action (X_("Mixer"), X_("ToggleFoldbackStrip"));
+		/* do it twice to force the change */
+		act->set_active (!yn);
+		act->set_active (yn);
+	}
+
+	yn = true;
 	node.get_property ("show-vca-pane", yn);
 	{
 		Glib::RefPtr<ToggleAction> act = ActionManager::get_toggle_action (X_("Mixer"), X_("ToggleVCAPane"));
@@ -2382,6 +2618,9 @@ Mixer_UI::get_state ()
 
 	act = ActionManager::get_toggle_action ("Mixer", "ToggleMonitorSection");
 	node->set_property ("monitor-section-visible", act->get_active ());
+
+	act = ActionManager::get_toggle_action ("Mixer", "ToggleFoldbackStrip");
+	node->set_property ("foldback-strip-visible", act->get_active ());
 
 	act = ActionManager::get_toggle_action ("Mixer", "ToggleVCAPane");
 	node->set_property ("show-vca-pane", act->get_active ());
@@ -3238,16 +3477,27 @@ void
 Mixer_UI::show_spill (boost::shared_ptr<Stripable> s)
 {
 	boost::shared_ptr<Stripable> ss = spilled_strip.lock();
-	if (ss != s) {
-		spilled_strip = s;
-		show_spill_change (s); /* EMIT SIGNAL */
-		if (s) {
-			_group_tabs->hide ();
-		} else {
-			_group_tabs->show ();
-		}
-		redisplay_track_list ();
+	if (ss == s) {
+		return;
 	}
+
+	spilled_strip = s;
+	_spill_gone_connection.disconnect ();
+	show_spill_change (s); /* EMIT SIGNAL */
+
+	if (s) {
+		s->DropReferences.connect (_spill_gone_connection, invalidator (*this), boost::bind (&Mixer_UI::spill_nothing, this), gui_context());
+		_group_tabs->hide ();
+	} else {
+		_group_tabs->show ();
+	}
+	redisplay_track_list ();
+}
+
+void
+Mixer_UI::spill_nothing ()
+{
+	show_spill (boost::shared_ptr<Stripable> ());
 }
 
 bool
@@ -3279,7 +3529,7 @@ Mixer_UI::register_actions ()
 	ActionManager::register_action (group, "select-none", _("Deselect all strips and processors"), sigc::mem_fun (*this, &Mixer_UI::select_none));
 
 	ActionManager::register_action (group, "select-next-stripable", _("Select Next Mixer Strip"), sigc::mem_fun (*this, &Mixer_UI::select_next_strip));
-	ActionManager::register_action (group, "select-prev-stripable", _("Scroll Previous Mixer Strip"), sigc::mem_fun (*this, &Mixer_UI::select_prev_strip));
+	ActionManager::register_action (group, "select-prev-stripable", _("Select Previous Mixer Strip"), sigc::mem_fun (*this, &Mixer_UI::select_prev_strip));
 
 	ActionManager::register_action (group, "scroll-left", _("Scroll Mixer Window to the left"), sigc::mem_fun (*this, &Mixer_UI::scroll_left));
 	ActionManager::register_action (group, "scroll-right", _("Scroll Mixer Window to the right"), sigc::mem_fun (*this, &Mixer_UI::scroll_right));
@@ -3296,6 +3546,11 @@ Mixer_UI::register_actions ()
 #endif
 
 	ActionManager::register_toggle_action (group, X_("ToggleMonitorSection"), _("Mixer: Show Monitor Section"), sigc::mem_fun (*this, &Mixer_UI::toggle_monitor_section));
+
+	ActionManager::register_toggle_action (group, X_("ToggleFoldbackStrip"), _("Mixer: Show Foldback Strip"), sigc::mem_fun (*this, &Mixer_UI::toggle_foldback_strip));
+
+	ActionManager::register_toggle_action (group, X_("toggle-disk-monitor"), _("Toggle Disk Monitoring"), sigc::bind (sigc::mem_fun (*this, &Mixer_UI::toggle_monitor_action), MonitorDisk, false, false));
+	ActionManager::register_toggle_action (group, X_("toggle-input-monitor"), _("Toggle Input Monitoring"), sigc::bind (sigc::mem_fun (*this, &Mixer_UI::toggle_monitor_action), MonitorInput, false, false));
 }
 
 void
@@ -3319,6 +3574,7 @@ Mixer_UI::control_action (boost::shared_ptr<T> (Stripable::*get_control)() const
 		if (s) {
 			ac = (s.get()->*get_control)();
 			if (ac) {
+				ac->start_touch (_session->audible_sample ());
 				cl->push_back (ac);
 				if (!have_val) {
 					val = !ac->get_value();
@@ -3500,5 +3756,117 @@ Mixer_UI::vca_unassign (boost::shared_ptr<VCA> vca)
 		if (ms) {
 			ms->vca_unassign (vca);
 		}
+	}
+}
+
+bool
+Mixer_UI::screenshot (std::string const& filename)
+{
+	if (!_session) {
+		return false;
+	}
+
+	int height = strip_packer.get_height();
+	bool with_vca = vca_vpacker.is_visible ();
+	MixerStrip* master = strip_by_route (_session->master_out ());
+
+	Gtk::OffscreenWindow osw;
+	Gtk::HBox b;
+	osw.add (b);
+	b.show ();
+
+	/* unpack widgets, add to OffscreenWindow */
+
+	strip_group_box.remove (strip_packer);
+	b.pack_start (strip_packer, false, false);
+	/* hide extra elements inside strip_packer */
+	add_button.hide ();
+	scroller_base.hide ();
+#ifdef MIXBUS
+	mb_shadow.hide();
+#endif
+
+	if (with_vca) {
+		/* work around Gtk::ScrolledWindow */
+		Gtk::Viewport* viewport = (Gtk::Viewport*) vca_scroller.get_child();
+		viewport->remove (); // << vca_hpacker
+		b.pack_start (vca_hpacker, false, false);
+		/* hide some growing widgets */
+		add_vca_button.hide ();
+		vca_scroller_base.hide();
+	}
+
+	if (master) {
+		out_packer.remove (*master);
+		b.pack_start (*master, false, false);
+		master->hide_master_spacer (true);
+	}
+
+	/* prepare the OffscreenWindow for rendering */
+	osw.set_size_request (-1, height);
+	osw.show ();
+	osw.queue_resize ();
+	osw.queue_draw ();
+	osw.get_window()->process_updates (true);
+
+	/* create screenshot */
+	Glib::RefPtr<Gdk::Pixbuf> pb = osw.get_pixbuf ();
+	pb->save (filename, "png");
+
+	/* unpack elements before destorying the Box & OffscreenWindow */
+	list<Gtk::Widget*> children = b.get_children();
+	for (list<Gtk::Widget*>::iterator child = children.begin(); child != children.end(); ++child) {
+		b.remove (**child);
+	}
+	osw.remove ();
+
+	/* now re-pack the widgets into the main mixer window */
+	add_button.show ();
+	scroller_base.show ();
+#ifdef MIXBUS
+	mb_shadow.show();
+#endif
+	strip_group_box.pack_start (strip_packer);
+	if (with_vca) {
+		add_vca_button.show ();
+		vca_scroller_base.show();
+		vca_scroller.add (vca_hpacker);
+	}
+	if (master) {
+		master->hide_master_spacer (false);
+		out_packer.pack_start (*master, false, false);
+	}
+	return true;
+}
+
+void
+Mixer_UI::toggle_monitor_action (MonitorChoice monitor_choice, bool group_override, bool all)
+{
+	MonitorChoice mc;
+	boost::shared_ptr<RouteList> rl;
+
+	for (AxisViewSelection::iterator i = _selection.axes.begin(); i != _selection.axes.end(); ++i) {
+		boost::shared_ptr<ARDOUR::Route> rt = boost::dynamic_pointer_cast<ARDOUR::Route> ((*i)->stripable());
+
+		if (rt->monitoring_control()->monitoring_choice() & monitor_choice) {
+			mc = MonitorChoice (rt->monitoring_control()->monitoring_choice() & ~monitor_choice);
+		} else {
+			mc = MonitorChoice (rt->monitoring_control()->monitoring_choice() | monitor_choice);
+		}
+
+		if (all) {
+			/* Primary-Tertiary-click applies change to all routes */
+			rl = _session->get_routes ();
+			_session->set_controls (route_list_to_control_list (rl, &Stripable::monitoring_control), (double) mc, Controllable::NoGroup);
+		} else if (group_override) {
+			rl.reset (new RouteList);
+			rl->push_back (rt);
+			_session->set_controls (route_list_to_control_list (rl, &Stripable::monitoring_control), (double) mc, Controllable::InverseGroup);
+		} else {
+			rl.reset (new RouteList);
+			rl->push_back (rt);
+			_session->set_controls (route_list_to_control_list (rl, &Stripable::monitoring_control), (double) mc, Controllable::UseGroup);
+		}
+
 	}
 }

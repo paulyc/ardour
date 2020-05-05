@@ -1,21 +1,22 @@
 /*
-    Copyright (C) 2013 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2013-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2015-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2017-2018 Ben Loftis <ben@harrisonconsoles.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <vector>
 
@@ -31,6 +32,7 @@
 
 #include "pbd/error.h"
 #include "pbd/strsplit.h"
+#include "pbd/unwind.h"
 
 #include "ardour/async_midi_port.h"
 #include "ardour/audio_backend.h"
@@ -80,7 +82,7 @@ PortManager::remove_all_ports ()
 	 * ports know that they have nothing to do.
 	 */
 
-	_port_remove_in_progress = true;
+	PBD::Unwinder<bool> uw (_port_remove_in_progress, true);
 
 	/* process lock MUST be held by caller
 	*/
@@ -101,8 +103,6 @@ PortManager::remove_all_ports ()
 	 */
 
 	_port_deletions_pending.reset ();
-
-	_port_remove_in_progress = false;
 }
 
 
@@ -395,7 +395,7 @@ PortManager::register_port (DataType dtype, const string& portname, bool input, 
 
 	/* limit the possible flags that can be set */
 
-	flags = PortFlags (flags & (Hidden|Shadow|IsTerminal));
+	flags = PortFlags (flags & (Hidden|Shadow|IsTerminal|TransportMasterPort));
 
 	try {
 		if (dtype == DataType::AUDIO) {
@@ -419,12 +419,13 @@ PortManager::register_port (DataType dtype, const string& portname, bool input, 
 			throw PortRegistrationFailure (string_compose ("unable to create port '%1': %2", portname, _("(unknown type)")));
 		}
 
+		newport->set_buffer_size (AudioEngine::instance()->samples_per_cycle());
+
 		RCUWriter<Ports> writer (ports);
 		boost::shared_ptr<Ports> ps = writer.get_copy ();
 		ps->insert (make_pair (make_port_name_relative (portname), newport));
 
 		/* writer goes out of scope, forces update */
-
 	}
 
 	catch (PortRegistrationFailure& err) {
@@ -640,14 +641,12 @@ PortManager::reconnect_ports ()
 {
 	boost::shared_ptr<Ports> p = ports.reader ();
 
-	if (!Profile->get_trx()) {
-		/* re-establish connections */
+	/* re-establish connections */
 
-		DEBUG_TRACE (DEBUG::Ports, string_compose ("reconnect %1 ports\n", p->size()));
+	DEBUG_TRACE (DEBUG::Ports, string_compose ("reconnect %1 ports\n", p->size()));
 
-		for (Ports::iterator i = p->begin(); i != p->end(); ++i) {
-			i->second->reconnect ();
-		}
+	for (Ports::iterator i = p->begin(); i != p->end(); ++i) {
+		i->second->reconnect ();
 	}
 
 	return 0;
@@ -656,6 +655,8 @@ PortManager::reconnect_ports ()
 void
 PortManager::connect_callback (const string& a, const string& b, bool conn)
 {
+	DEBUG_TRACE (DEBUG::BackendCallbacks, string_compose (X_("connect callback %1 + %2 connected ? %3\n"), a, b, conn));
+
 	boost::shared_ptr<Port> port_a;
 	boost::shared_ptr<Port> port_b;
 	Ports::iterator x;
@@ -695,6 +696,8 @@ PortManager::connect_callback (const string& a, const string& b, bool conn)
 void
 PortManager::registration_callback ()
 {
+	DEBUG_TRACE (DEBUG::BackendCallbacks, "port registration callback\n");
+
 	if (!_port_remove_in_progress) {
 
 		{
@@ -767,6 +770,8 @@ PortManager::my_name() const
 int
 PortManager::graph_order_callback ()
 {
+	DEBUG_TRACE (DEBUG::BackendCallbacks, "graph order callback\n");
+
 	if (!_port_remove_in_progress) {
 		GraphReordered(); /* EMIT SIGNAL */
 	}
@@ -804,12 +809,16 @@ PortManager::cycle_start (pframes_t nframes, Session* s)
 	if (s && s->rt_tasklist () && fabs (Port::speed_ratio ()) != 1.0) {
 		RTTaskList::TaskList tl;
 		for (Ports::iterator p = _cycle_ports->begin(); p != _cycle_ports->end(); ++p) {
-			tl.push_back (boost::bind (&Port::cycle_start, p->second, nframes));
+			if (!(p->second->flags() & TransportMasterPort)) {
+				tl.push_back (boost::bind (&Port::cycle_start, p->second, nframes));
+			}
 		}
 		s->rt_tasklist()->process (tl);
 	} else {
 		for (Ports::iterator p = _cycle_ports->begin(); p != _cycle_ports->end(); ++p) {
-			p->second->cycle_start (nframes);
+			if (!(p->second->flags() & TransportMasterPort)) {
+				p->second->cycle_start (nframes);
+			}
 		}
 	}
 }
@@ -818,20 +827,26 @@ void
 PortManager::cycle_end (pframes_t nframes, Session* s)
 {
 	// see optimzation note in ::cycle_start()
-	if (s && s->rt_tasklist () && fabs (Port::speed_ratio ()) != 1.0) {
+	if (0 && s && s->rt_tasklist () && fabs (Port::speed_ratio ()) != 1.0) {
 		RTTaskList::TaskList tl;
 		for (Ports::iterator p = _cycle_ports->begin(); p != _cycle_ports->end(); ++p) {
-			tl.push_back (boost::bind (&Port::cycle_end, p->second, nframes));
+			if (!(p->second->flags() & TransportMasterPort)) {
+				tl.push_back (boost::bind (&Port::cycle_end, p->second, nframes));
+			}
 		}
 		s->rt_tasklist()->process (tl);
 	} else {
 		for (Ports::iterator p = _cycle_ports->begin(); p != _cycle_ports->end(); ++p) {
-			p->second->cycle_end (nframes);
+			if (!(p->second->flags() & TransportMasterPort)) {
+				p->second->cycle_end (nframes);
+			}
 		}
 	}
 
 	for (Ports::iterator p = _cycle_ports->begin(); p != _cycle_ports->end(); ++p) {
-		p->second->flush_buffers (nframes);
+		/* AudioEngine::split_cycle flushes buffers until Port::port_offset.
+		 * Now only flush remaining events (after Port::port_offset) */
+		p->second->flush_buffers (nframes * Port::speed_ratio() - Port::port_offset ());
 	}
 
 	_cycle_ports.reset ();
@@ -921,15 +936,19 @@ void
 PortManager::cycle_end_fade_out (gain_t base_gain, gain_t gain_step, pframes_t nframes, Session* s)
 {
 	// see optimzation note in ::cycle_start()
-	if (s && s->rt_tasklist () && fabs (Port::speed_ratio ()) != 1.0) {
+	if (0 && s && s->rt_tasklist () && fabs (Port::speed_ratio ()) != 1.0) {
 		RTTaskList::TaskList tl;
 		for (Ports::iterator p = _cycle_ports->begin(); p != _cycle_ports->end(); ++p) {
-			tl.push_back (boost::bind (&Port::cycle_end, p->second, nframes));
+			if (!(p->second->flags() & TransportMasterPort)) {
+				tl.push_back (boost::bind (&Port::cycle_end, p->second, nframes));
+			}
 		}
 		s->rt_tasklist()->process (tl);
 	} else {
 		for (Ports::iterator p = _cycle_ports->begin(); p != _cycle_ports->end(); ++p) {
-			p->second->cycle_end (nframes);
+			if (!(p->second->flags() & TransportMasterPort)) {
+				p->second->cycle_end (nframes);
+			}
 		}
 	}
 
@@ -1250,7 +1269,8 @@ PortManager::fill_midi_port_info_locked ()
 
 	for (vector<string>::iterator p = ports.begin(); p != ports.end(); ++p) {
 
-		if (port_is_mine (*p)) {
+		/* ugly hack, ideally we'd use a port-flag, or at vkbd_output_port()->name() */
+		if (port_is_mine (*p) && *p != _backend->my_name() + ":" + _("Virtual Keyboard")) {
 			continue;
 		}
 
@@ -1260,6 +1280,8 @@ PortManager::fill_midi_port_info_locked ()
 
 			if (port_is_control_only (*p)) {
 				flags = MidiPortControl;
+			} else if (*p == _backend->my_name() + ":" + _("Virtual Keyboard")) {
+				flags = MidiPortFlags(MidiPortSelection | MidiPortMusic);
 			}
 
 			MidiPortInformation mpi (_backend->name(), *p, true, flags, true);
@@ -1339,4 +1361,44 @@ PortManager::fill_midi_port_info_locked ()
 	}
 
 	midi_info_dirty = false;
+}
+
+void
+PortManager::set_port_buffer_sizes (pframes_t n)
+{
+
+	boost::shared_ptr<Ports> all = ports.reader();
+
+	for (Ports::iterator p = all->begin(); p != all->end(); ++p) {
+		p->second->set_buffer_size (n);
+	}
+}
+
+bool
+PortManager::check_for_ambiguous_latency (bool log) const
+{
+	bool rv = false;
+	boost::shared_ptr<Ports> plist = ports.reader();
+	for (Ports::iterator pi = plist->begin(); pi != plist->end(); ++pi) {
+		boost::shared_ptr<Port> const& p (pi->second);
+		if (! p->sends_output () || (p->flags () & IsTerminal)) {
+			continue;
+		}
+		if (boost::dynamic_pointer_cast<AsyncMIDIPort>(p)) {
+			continue;
+		}
+		assert (port_is_mine (p->name ()));
+
+		LatencyRange range;
+		p->get_connected_latency_range (range, true);
+		if (range.min != range.max) {
+			if (log) {
+				warning << string_compose(_("Ambiguous latency for port '%1' (%2, %3)"), p->name(), range.min, range.max) << endmsg;
+				rv = true;
+			} else {
+				return true;
+			}
+		}
+	}
+	return rv;
 }

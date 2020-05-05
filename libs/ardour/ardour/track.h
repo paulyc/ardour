@@ -1,20 +1,23 @@
 /*
-    Copyright (C) 2006 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2006-2011 David Robillard <d@drobilla.net>
+ * Copyright (C) 2008-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_track_h__
 #define __ardour_track_h__
@@ -39,6 +42,7 @@ class DiskWriter;
 class IO;
 class RecordEnableControl;
 class RecordSafeControl;
+class MidiStateTracker;
 
 /** A track is an route (bus) with a recordable diskstream and
  * related objects relevant to recording, playback and editing.
@@ -62,7 +66,7 @@ public:
 
 	MeterState metering_state () const;
 
-	bool set_processor_state (XMLNode const & node, XMLProperty const* prop, ProcessorList& new_order, bool& must_configure);
+	bool set_processor_state (XMLNode const& node, int version, XMLProperty const* prop, ProcessorList& new_order, bool& must_configure);
 
 	bool declick_in_progress () const;
 
@@ -107,7 +111,8 @@ public:
 	virtual boost::shared_ptr<Region> bounce_range (samplepos_t start, samplepos_t end, InterThreadInfo& itt,
 							boost::shared_ptr<Processor> endpoint, bool include_endpoint) = 0;
 	virtual int export_stuff (BufferSet& bufs, samplepos_t start_sample, samplecnt_t nframes,
-				  boost::shared_ptr<Processor> endpoint, bool include_endpoint, bool for_export, bool for_freeze) = 0;
+	                          boost::shared_ptr<Processor> endpoint, bool include_endpoint, bool for_export, bool for_freeze,
+	                          MidiStateTracker&) = 0;
 
 	virtual int set_state (const XMLNode&, int version);
 	static void zero_diskstream_id_in_xml (XMLNode&);
@@ -126,7 +131,6 @@ public:
 	boost::shared_ptr<Playlist> playlist ();
 	void request_input_monitoring (bool);
 	void ensure_input_monitoring (bool);
-	bool destructive () const;
 	std::list<boost::shared_ptr<Source> > & last_capture_sources ();
 	std::string steal_write_source_name ();
 	void reset_write_sources (bool, bool force = false);
@@ -134,12 +138,11 @@ public:
 	float capture_buffer_load () const;
 	int do_refill ();
 	int do_flush (RunContext, bool force = false);
-	void set_pending_overwrite ();
+	void set_pending_overwrite (OverwriteReason);
 	int seek (samplepos_t, bool complete_refill = false);
 	bool can_internal_playback_seek (samplecnt_t);
 	void internal_playback_seek (samplecnt_t);
 	void non_realtime_locate (samplepos_t);
-	void realtime_handle_transport_stopped ();
 	bool overwrite_existing_buffers ();
 	samplecnt_t get_captured_samples (uint32_t n = 0) const;
 	void transport_looped (samplepos_t);
@@ -164,11 +167,13 @@ public:
 	}
 	void adjust_playback_buffering ();
 	void adjust_capture_buffering ();
+	void reload_loop ();
 
 	PBD::Signal0<void> FreezeChange;
 	PBD::Signal0<void> PlaylistChanged;
 	PBD::Signal0<void> SpeedChanged;
 	PBD::Signal0<void> AlignmentStyleChanged;
+	PBD::Signal0<void> ChanCountChanged;
 
 protected:
 	XMLNode& state (bool save_template);
@@ -205,7 +210,6 @@ protected:
 
 	FreezeRecord _freeze_record;
 	XMLNode*      pending_state;
-	bool         _destructive;
 
 	boost::shared_ptr<AutomationControl> _record_enable_control;
 	boost::shared_ptr<AutomationControl> _record_safe_control;
@@ -217,13 +221,14 @@ protected:
 
 	AlignChoice _alignment_choice;
 	void set_align_choice_from_io ();
-	void input_changed ();
 
 	void use_captured_audio_sources (SourceList&, CaptureInfos const &);
 	void use_captured_midi_sources (SourceList&, CaptureInfos const &);
 
 private:
 	void parameter_changed (std::string const & p);
+	void input_changed ();
+	void chan_count_changed ();
 
 	std::string _diskstream_name;
 };

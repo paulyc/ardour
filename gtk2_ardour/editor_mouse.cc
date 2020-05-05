@@ -1,21 +1,30 @@
 /*
-    Copyright (C) 2000-2001 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2006 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2005-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2015 David Robillard <d@drobilla.net>
+ * Copyright (C) 2006-2016 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2006 Sampo Savolainen <v2@iki.fi>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2007 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2013-2014 Colin Fletcher <colin.m.fletcher@googlemail.com>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2014-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2014-2018 Ben Loftis <ben@harrisonconsoles.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <cassert>
 #include <cstdlib>
@@ -265,8 +274,9 @@ Editor::set_mouse_mode (MouseMode m, bool force)
 	}
 
 	if (ARDOUR::Profile->get_mixbus()) {
-		if (m == MouseCut) m = MouseObject;
-		if (m == MouseAudition) m = MouseRange;
+		if (m == MouseAudition) {
+			m = MouseRange;
+		}
 	}
 
 	Glib::RefPtr<Action>       act  = get_mouse_mode_action(m);
@@ -283,8 +293,9 @@ void
 Editor::mouse_mode_toggled (MouseMode m)
 {
 	if (ARDOUR::Profile->get_mixbus()) {
-		if (m == MouseCut)  m = MouseObject;
-		if (m == MouseAudition)  m = MouseRange;
+		if (m == MouseAudition)  {
+			m = MouseRange;
+		}
 	}
 
 	Glib::RefPtr<Action>       act  = get_mouse_mode_action(m);
@@ -335,6 +346,47 @@ Editor::mouse_mode_toggled (MouseMode m)
 	set_gain_envelope_visibility ();
 
 	update_time_selection_display ();
+
+	if (mouse_mode == Editing::MouseContent) {
+
+		/* reinstate any existing MIDI note (and by extension, MIDI
+		 * region) selection for internal edit mode. This allows a user
+		 * to enter/exit/enter this mode without losing a selection of
+		 * notes.
+		 */
+
+		catch_up_on_midi_selection ();
+
+		/* ensure that the track canvas has focus, so that key events
+		   will get directed to the correct place.
+		*/
+		_track_canvas->grab_focus ();
+
+		/* enable MIDI editing actions, which in turns enables their
+		   bindings
+		*/
+		ActionManager::set_sensitive (_midi_actions, true);
+
+		/* mark "magic widget focus" so that we handle key events
+		 * correctly
+		 */
+		Keyboard::magic_widget_grab_focus ();
+	} else {
+		/* undo some of the above actions, since we're not in internal
+		   edit mode.
+		*/
+		ActionManager::set_sensitive (_midi_actions, false);
+		Keyboard::magic_widget_drop_focus ();
+	}
+
+	if (was_internal && !internal_editing()) {
+		/* drop any selected regions so that they in turn
+		 * redraw any selected notes. This essentially the
+		 * opposite of ::catch_up_on_midi_selection() called
+		 * above.
+		 */
+		get_selection().clear_regions ();
+	}
 
 	update_all_enter_cursors ();
 
@@ -1369,7 +1421,7 @@ Editor::button_press_handler (ArdourCanvas::Item* item, GdkEvent* event, ItemTyp
 
 		MusicSample where (canvas_event_sample (event), 0);
 		snap_to (where);
-		_session->request_locate (where.sample, false);
+		_session->request_locate (where.sample, MustStop);
 	}
 
 	switch (event->button.button) {
@@ -2055,7 +2107,7 @@ Editor::scrub (samplepos_t sample, double current_x)
 
 	if (scrubbing_direction == 0) {
 		/* first move */
-		_session->request_locate (sample, false);
+		_session->request_locate (sample, MustStop);
 		_session->request_transport_speed (0.1);
 		scrubbing_direction = 1;
 
@@ -2616,6 +2668,9 @@ Editor::escape ()
 	if (_drags->active ()) {
 		_drags->abort ();
 	} else if (_session) {
+
+		midi_action (&MidiRegionView::clear_note_selection);
+
 		selection->clear ();
 
 		/* if session is playing a range, cancel that */

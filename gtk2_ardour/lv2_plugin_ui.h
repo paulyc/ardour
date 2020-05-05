@@ -1,21 +1,23 @@
 /*
-    Copyright (C) 2008-2012 Paul Davis
-    Author: David Robillard
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2008-2012 David Robillard <d@drobilla.net>
+ * Copyright (C) 2008-2015 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2010-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2012-2018 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_lv2_plugin_ui_h__
 #define __ardour_lv2_plugin_ui_h__
@@ -42,12 +44,6 @@
 #include "lv2_external_ui.h"
 
 #include "lv2/lv2plug.in/ns/extensions/ui/ui.h"
-#ifndef LV2_1_14_0
-typedef struct _LV2UI_Request_Parameter {
-	LV2UI_Feature_Handle handle;
-	uint32_t (*request)(LV2UI_Feature_Handle handle, LV2_URID key);
-}LV2UI_Request_Parameter;
-#endif
 
 namespace ARDOUR {
 	class PluginInsert;
@@ -90,11 +86,12 @@ private:
 	struct lv2_external_ui_host          _external_ui_host;
 	LV2_Feature                          _external_ui_feature;
 	LV2_Feature                          _external_kxui_feature;
-	LV2UI_Request_Parameter              _lv2ui_request_paramater;
+#ifdef HAVE_LV2_1_17_2
+	LV2UI_Request_Value                  _lv2ui_request_value;
 	LV2_Feature                          _lv2ui_request_feature;
+#endif
 	struct lv2_external_ui*              _external_ui_ptr;
 	LV2_Feature                          _parent_feature;
-	Gtk::Window*                         _win_ptr;
 	void*                                _inst;
 	typedef std::set<uint32_t> Updates;
 	Updates                              _updates;
@@ -119,7 +116,14 @@ private:
 	                  uint32_t port_index,
 	                  bool     grabbed);
 
-	static uint32_t request_parameter (void* handle, LV2_URID key);
+#ifdef HAVE_LV2_1_17_2
+	static LV2UI_Request_Value_Status
+	request_value(void*                     handle,
+	              LV2_URID                  key,
+	              LV2_URID                  type,
+	              const LV2_Feature* const* features);
+#endif
+
 	void set_path_property (int,
 	                        const ARDOUR::ParameterDescriptor&,
 	                        Gtk::FileChooserDialog*);

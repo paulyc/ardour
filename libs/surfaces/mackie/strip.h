@@ -1,10 +1,29 @@
+/*
+ * Copyright (C) 2006-2007 John Anderson
+ * Copyright (C) 2012-2015 Paul Davis <paul@linuxaudiosystems.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
 #ifndef __ardour_mackie_control_protocol_strip_h__
 #define __ardour_mackie_control_protocol_strip_h__
 
 #include <string>
 #include <iostream>
 
-#include "evoral/Parameter.hpp"
+#include "evoral/Parameter.h"
 
 #include "pbd/property_basics.h"
 #include "pbd/ringbuffer.h"
@@ -74,6 +93,12 @@ public:
 
 	MidiByteArray display (uint32_t line_number, const std::string&);
 	MidiByteArray blank_display (uint32_t line_number);
+	
+	static std::string format_paramater_for_display(
+		ARDOUR::ParameterDescriptor const& desc, 
+		float val, 
+		boost::shared_ptr<ARDOUR::Stripable> stripable_for_non_mixbus_azimuth_automation, 
+		bool& overwrite_screen_hold);
 
 	void zero ();
 
@@ -117,9 +142,6 @@ private:
 	uint64_t return_to_vpot_mode_display_at;
 	boost::shared_ptr<ARDOUR::Stripable> _stripable;
 	PBD::ScopedConnectionList stripable_connections;
-	PBD::ScopedConnectionList subview_connections;
-	PBD::ScopedConnectionList send_connections;
-	int       eq_band;
 
 	ARDOUR::AutomationType  _pan_mode;
 
@@ -159,18 +181,6 @@ private:
 	void reset_saved_values ();
 
 	bool is_midi_track () const;
-
-	void notify_eq_change (boost::weak_ptr<ARDOUR::AutomationControl>, bool force);
-	void setup_eq_vpot (boost::shared_ptr<ARDOUR::Stripable>);
-
-	void notify_dyn_change (boost::weak_ptr<ARDOUR::AutomationControl>, bool force, bool propagate_mode_change);
-	void setup_dyn_vpot (boost::shared_ptr<ARDOUR::Stripable>);
-
-	void notify_send_level_change (uint32_t band, bool force);
-	void setup_sends_vpot (boost::shared_ptr<ARDOUR::Stripable>);
-
-	void notify_trackview_change (ARDOUR::AutomationType, uint32_t band, bool force);
-	void setup_trackview_vpot (boost::shared_ptr<ARDOUR::Stripable>);
 };
 
 }

@@ -1,21 +1,29 @@
 /*
-    Copyright (C) 2000 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2008-2009 Sampo Savolainen <v2@iki.fi>
+ * Copyright (C) 2008-2015 David Robillard <d@drobilla.net>
+ * Copyright (C) 2008-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2014-2015 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2014 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2016-2017 Julien "_FrnchFrgg_" RIVAUD <frnchfrgg@free.fr>
+ * Copyright (C) 2017-2018 Johannes Mueller <github@johannes-mueller.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifdef WAF_BUILD
 #include "gtk2ardour-config.h"
@@ -35,7 +43,7 @@
 #include "pbd/failed_constructor.h"
 
 #include "evoral/midi_events.h"
-#include "evoral/PatchChange.hpp"
+#include "evoral/PatchChange.h"
 
 #include "midi++/midnam_patch.h"
 
@@ -80,7 +88,6 @@ GenericPluginUI::GenericPluginUI (boost::shared_ptr<PluginInsert> pi, bool scrol
 	, is_scrollable(scrollable)
 	, _plugin_pianokeyboard_expander (_("MIDI Keyboard"))
 	, _piano (0)
-	, _pianomm (0)
 	, _piano_velocity (*manage (new Adjustment (100, 1, 127, 1, 16)))
 	, _piano_channel (*manage (new Adjustment (0, 1, 16, 1, 1)))
 {
@@ -97,30 +104,30 @@ GenericPluginUI::GenericPluginUI (boost::shared_ptr<PluginInsert> pi, bool scrol
 	Label* combo_label = manage (new Label (_("<span size=\"large\">Presets</span>")));
 	combo_label->set_use_markup (true);
 
-	latency_button.signal_clicked.connect (sigc::mem_fun (*this, &PlugUIBase::latency_button_clicked));
-	set_latency_label ();
-
 	smaller_hbox->pack_start (latency_button, false, false, 4);
 	smaller_hbox->pack_start (pin_management_button, false, false, 4);
-	smaller_hbox->pack_start (_preset_combo, false, false);
 	smaller_hbox->pack_start (_preset_modified, false, false);
+	smaller_hbox->pack_start (_preset_combo, false, false);
 	smaller_hbox->pack_start (add_button, false, false);
 	smaller_hbox->pack_start (save_button, false, false);
 	smaller_hbox->pack_start (delete_button, false, false);
+	if (pi->controls().size() > 0 && has_descriptive_presets ()) {
+		smaller_hbox->pack_start (preset_browser_button, false, false);
+	}
 	if (pi->controls().size() > 0) {
 		smaller_hbox->pack_start (reset_button, false, false, 4);
 	}
 	smaller_hbox->pack_start (bypass_button, false, true, 4);
 
-	automation_manual_all_button.set_text(_("Manual"));
+	automation_manual_all_button.set_text (GainMeterBase::astate_string (ARDOUR::Off));
 	automation_manual_all_button.set_name (X_("generic button"));
-	automation_play_all_button.set_text(_("Play"));
+	automation_play_all_button.set_text (GainMeterBase::astate_string (ARDOUR::Play));
 	automation_play_all_button.set_name (X_("generic button"));
-	automation_write_all_button.set_text(_("Write"));
+	automation_write_all_button.set_text (GainMeterBase::astate_string (ARDOUR::Write));
 	automation_write_all_button.set_name (X_("generic button"));
-	automation_touch_all_button.set_text(_("Touch"));
+	automation_touch_all_button.set_text (GainMeterBase::astate_string (ARDOUR::Touch));
 	automation_touch_all_button.set_name (X_("generic button"));
-	automation_latch_all_button.set_text(_("Touch"));
+	automation_latch_all_button.set_text (GainMeterBase::astate_string (ARDOUR::Latch));
 	automation_latch_all_button.set_name (X_("generic button"));
 
 	constraint_hbox->set_spacing (5);
@@ -129,13 +136,11 @@ GenericPluginUI::GenericPluginUI (boost::shared_ptr<PluginInsert> pi, bool scrol
 	VBox* v1_box = manage (new VBox);
 	VBox* v2_box = manage (new VBox);
 	if (pi->is_instrument ()) {
-		_piano = (PianoKeyboard*)piano_keyboard_new();
-		_pianomm = Glib::wrap((GtkWidget*)_piano);
-		_pianomm->set_flags(Gtk::CAN_FOCUS);
-		_pianomm->add_events(Gdk::KEY_PRESS_MASK|Gdk::KEY_RELEASE_MASK);
+		_piano = new APianoKeyboard ();
+		_piano->set_flags(Gtk::CAN_FOCUS);
 
-		g_signal_connect (G_OBJECT (_piano), "note-on", G_CALLBACK (GenericPluginUI::_note_on_event_handler), this);
-		g_signal_connect (G_OBJECT (_piano), "note-off", G_CALLBACK (GenericPluginUI::_note_off_event_handler), this);
+		_piano->NoteOn.connect (sigc::mem_fun (*this, &GenericPluginUI::note_on_event_handler));
+		_piano->NoteOff.connect (sigc::mem_fun (*this, &GenericPluginUI::note_off_event_handler));
 
 		HBox* box = manage (new HBox);
 		box->pack_start (*manage (new Label (_("Channel:"))), false, false);
@@ -148,7 +153,7 @@ GenericPluginUI::GenericPluginUI (boost::shared_ptr<PluginInsert> pi, bool scrol
 
 		_pianobox.set_spacing (4);
 		_pianobox.pack_start (*box2, true, true);
-		_pianobox.pack_start (*_pianomm, true, true);
+		_pianobox.pack_start (*_piano, true, true);
 
 		_plugin_pianokeyboard_expander.set_expanded(false);
 		_plugin_pianokeyboard_expander.property_expanded().signal_changed().connect( sigc::mem_fun(*this, &GenericPluginUI::toggle_pianokeyboard));
@@ -225,7 +230,7 @@ GenericPluginUI::~GenericPluginUI ()
 		screen_update_connection.disconnect();
 	}
 	delete automation_menu;
-	delete _pianomm;
+	delete _piano;
 }
 
 void
@@ -354,6 +359,10 @@ GenericPluginUI::build ()
 				= boost::dynamic_pointer_cast<ARDOUR::AutomationControl>(
 					insert->control(param));
 
+			if (c && c->flags () & Controllable::HiddenControl) {
+				continue;
+			}
+
 			ParameterDescriptor desc;
 			plugin->get_parameter_descriptor(i, desc);
 			if ((cui = build_control_ui (param, desc, c, value, plugin->parameter_is_input(i), hint.knob)) == 0) {
@@ -416,15 +425,7 @@ GenericPluginUI::build ()
 	}
 
 	if (control_uis.empty ()) {
-		std::vector<Plugin::PresetRecord> presets = insert->plugin()->get_presets();
-		bool show_preset_browser = false;
-		for (std::vector<Plugin::PresetRecord>::const_iterator i = presets.begin(); i != presets.end(); ++i) {
-			if (i->valid && !i->description.empty()) {
-				show_preset_browser = true;
-				break;
-			}
-		}
-		if (show_preset_browser) {
+		if (has_descriptive_presets ()) {
 			preset_gui = new PluginPresetsUI (insert);
 			hpacker.pack_start (*preset_gui, true, true);
 		}
@@ -876,30 +877,9 @@ GenericPluginUI::automation_state_changed (ControlUI* cui)
 	cui->automate_button.set_active((state != ARDOUR::Off));
 
 	if (cui->short_autostate) {
-		cui->automate_button.set_text (
-				GainMeterBase::astate_string (state));
-		return;
-	}
-
-	switch (state & (ARDOUR::Off|Play|Touch|Write|Latch)) {
-	case ARDOUR::Off:
-		cui->automate_button.set_text (S_("Automation|Manual"));
-		break;
-	case Play:
-		cui->automate_button.set_text (_("Play"));
-		break;
-	case Write:
-		cui->automate_button.set_text (_("Write"));
-		break;
-	case Touch:
-		cui->automate_button.set_text (_("Touch"));
-		break;
-	case Latch:
-		cui->automate_button.set_text (_("Latch"));
-		break;
-	default:
-		cui->automate_button.set_text (_("???"));
-		break;
+		cui->automate_button.set_text (GainMeterBase::short_astate_string (state));
+	} else {
+		cui->automate_button.set_text (GainMeterBase::astate_string (state));
 	}
 }
 
@@ -1215,19 +1195,20 @@ GenericPluginUI::astate_button_event (GdkEventButton* ev, ControlUI* cui)
 	MenuList& items (automation_menu->items());
 
 	items.clear ();
-	items.push_back (MenuElem (S_("Automation|Manual"),
+	items.push_back (MenuElem (GainMeterBase::astate_string (ARDOUR::Off),
 				   sigc::bind (sigc::mem_fun(*this, &GenericPluginUI::set_automation_state), (AutoState) ARDOUR::Off, cui)));
-	items.push_back (MenuElem (_("Play"),
+	items.push_back (MenuElem (GainMeterBase::astate_string (Play),
 				   sigc::bind (sigc::mem_fun(*this, &GenericPluginUI::set_automation_state), (AutoState) Play, cui)));
-	items.push_back (MenuElem (_("Write"),
+	items.push_back (MenuElem (GainMeterBase::astate_string (Write),
 				   sigc::bind (sigc::mem_fun(*this, &GenericPluginUI::set_automation_state), (AutoState) Write, cui)));
-	items.push_back (MenuElem (_("Touch"),
+	items.push_back (MenuElem (GainMeterBase::astate_string (Touch),
 				   sigc::bind (sigc::mem_fun(*this, &GenericPluginUI::set_automation_state), (AutoState) Touch, cui)));
-	items.push_back (MenuElem (_("Latch"),
+	items.push_back (MenuElem (GainMeterBase::astate_string (Latch),
 				   sigc::bind (sigc::mem_fun(*this, &GenericPluginUI::set_automation_state), (AutoState) Latch, cui)));
 
-	anchored_menu_popup(automation_menu, &cui->automate_button, cui->automate_button.get_text(),
-	                    1, ev->time);
+	anchored_menu_popup (automation_menu, &cui->automate_button,
+	                     GainMeterBase::astate_string (insert->get_parameter_automation_state (cui->parameter())),
+	                     1, ev->time);
 
 	return true;
 }
@@ -1389,22 +1370,10 @@ GenericPluginUI::toggle_pianokeyboard ()
 }
 
 void
-GenericPluginUI::_note_on_event_handler(GtkWidget*, int note, gpointer arg)
-{
-	((GenericPluginUI*)arg)->note_on_event_handler(note);
-}
-
-void
-GenericPluginUI::_note_off_event_handler(GtkWidget*, int note, gpointer arg)
-{
-	((GenericPluginUI*)arg)->note_off_event_handler(note);
-}
-
-void
-GenericPluginUI::note_on_event_handler (int note)
+GenericPluginUI::note_on_event_handler (int note, int)
 {
 	MidiTrack* mt = dynamic_cast<MidiTrack*> (insert->owner());
-	_pianomm->grab_focus ();
+	_piano->grab_focus ();
 	uint8_t channel = _piano_channel.get_value_as_int () - 1;
 	uint8_t event[3];
 	event[0] = (MIDI_CMD_NOTE_ON | channel);

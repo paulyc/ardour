@@ -312,11 +312,23 @@
 				>
 			</File>
 			<File
+				RelativePath="..\gtk2_ardour\ardour_message.cc"
+				>
+			</File>
+			<File
 				RelativePath="..\gtk2_ardour\ardour_ui.cc"
 				>
 			</File>
 			<File
 				RelativePath="..\gtk2_ardour\ardour_ui2.cc"
+				>
+			</File>
+			<File
+				RelativePath="..\gtk2_ardour\ardour_ui3.cc"
+				>
+			</File>
+			<File
+				RelativePath="..\gtk2_ardour\ardour_ui_access_web.cc"
 				>
 			</File>
 			<File
@@ -332,11 +344,31 @@
 				>
 			</File>
 			<File
+				RelativePath="..\gtk2_ardour\ardour_ui_engine.cc"
+				>
+			</File>
+			<File
+				RelativePath="..\gtk2_ardour\ardour_ui_keys.cc"
+				>
+			</File>
+			<File
 				RelativePath="..\gtk2_ardour\ardour_ui_mixer.cc"
 				>
 			</File>
 			<File
 				RelativePath="..\gtk2_ardour\ardour_ui_options.cc"
+				>
+			</File>
+			<File
+				RelativePath="..\gtk2_ardour\ardour_ui_session.cc"
+				>
+			</File>
+			<File
+				RelativePath="..\gtk2_ardour\ardour_ui_startup.cc"
+				>
+			</File>
+			<File
+				RelativePath="..\gtk2_ardour\ardour_ui_video.cc"
 				>
 			</File>
 			<File
@@ -548,6 +580,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\gtk2_ardour\editor_sources.cc"
+				>
+			</File>
+			<File
 				RelativePath="..\gtk2_ardour\editor_summary.cc"
 				>
 			</File>
@@ -632,6 +668,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\gtk2_ardour\foldback_strip.cc"
+				>
+			</File>
+			<File
 				RelativePath="..\gtk2_ardour\gain_meter.cc"
 				>
 			</File>
@@ -653,10 +693,6 @@
 			</File>
 			<File
 				RelativePath="..\gtk2_ardour\group_tabs.cc"
-				>
-			</File>
-			<File
-				RelativePath="..\gtk2_ardour\gtk_pianokeyboard.c"
 				>
 			</File>
 			<File
@@ -816,6 +852,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\gtk2_ardour\missing_filesource_dialog.cc"
+				>
+			</File>
+			<File
 				RelativePath="..\gtk2_ardour\missing_plugin_dialog.cc"
 				>
 			</File>
@@ -857,6 +897,10 @@
 			</File>
 			<File
 				RelativePath="..\gtk2_ardour\new_plugin_preset_dialog.cc"
+				>
+			</File>
+			<File
+				RelativePath="..\gtk2_ardour\new_user_wizard.cc"
 				>
 			</File>
 			<File
@@ -924,7 +968,15 @@
 				>
 			</File>
 			<File
+				RelativePath="..\gtk2_ardour\piano_key_bindings.cc"
+				>
+			</File>
+			<File
 				RelativePath="..\gtk2_ardour\piano_roll_header.cc"
+				>
+			</File>
+			<File
+				RelativePath="..\gtk2_ardour\pianokeyboard.cc"
 				>
 			</File>
 			<File
@@ -957,6 +1009,10 @@
 			</File>
 			<File
 				RelativePath="..\gtk2_ardour\plugin_presets_ui.cc"
+				>
+			</File>
+			<File
+				RelativePath="..\gtk2_ardour\plugin_scan_dialog.cc"
 				>
 			</File>
 			<File
@@ -1100,6 +1156,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\gtk2_ardour\screensaver.cc"
+				>
+			</File>
+			<File
 				RelativePath="..\gtk2_ardour\script_selector.cc"
 				>
 			</File>
@@ -1164,7 +1224,7 @@
 				>
 			</File>
 			<File
-				RelativePath="..\gtk2_ardour\startup.cc"
+				RelativePath="..\gtk2_ardour\startup_fsm.cc"
 				>
 			</File>
 			<File
@@ -1201,10 +1261,6 @@
 			</File>
 			<File
 				RelativePath="..\gtk2_ardour\sys_ex.cc"
-				>
-			</File>
-			<File
-				RelativePath="..\gtk2_ardour\tape_region_view.cc"
 				>
 			</File>
 			<File
@@ -1328,6 +1384,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\gtk2_ardour\virtual_keyboard_window.cc"
+				>
+			</File>
+			<File
 				RelativePath="..\gtk2_ardour\visibility_group.cc"
 				>
 			</File>
@@ -1391,6 +1451,10 @@
 			</File>
 			<File
 				RelativePath="..\gtk2_ardour\ardour_http.h"
+				>
+			</File>
+			<File
+				RelativePath="..\gtk2_ardour\ardour_message.h"
 				>
 			</File>
 			<File
@@ -1594,6 +1658,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\gtk2_ardour\editor_sources.h"
+				>
+			</File>
+			<File
 				RelativePath="..\gtk2_ardour\editor_summary.h"
 				>
 			</File>
@@ -1678,6 +1746,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\gtk2_ardour\foldback_strip.h"
+				>
+			</File>
+			<File
 				RelativePath="..\gtk2_ardour\gain_meter.h"
 				>
 			</File>
@@ -1699,10 +1771,6 @@
 			</File>
 			<File
 				RelativePath="..\gtk2_ardour\group_tabs.h"
-				>
-			</File>
-			<File
-				RelativePath="..\gtk2_ardour\gtk_pianokeyboard.h"
 				>
 			</File>
 			<File
@@ -1886,6 +1954,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\gtk2_ardour\missing_filesource_dialog.h"
+				>
+			</File>
+			<File
 				RelativePath="..\gtk2_ardour\missing_plugin_dialog.h"
 				>
 			</File>
@@ -1927,6 +1999,10 @@
 			</File>
 			<File
 				RelativePath="..\gtk2_ardour\new_plugin_preset_dialog.h"
+				>
+			</File>
+			<File
+				RelativePath="..\gtk2_ardour\new_user_wizard.h"
 				>
 			</File>
 			<File
@@ -1998,7 +2074,15 @@
 				>
 			</File>
 			<File
+				RelativePath="..\gtk2_ardour\piano_key_bindings.h"
+				>
+			</File>
+			<File
 				RelativePath="..\gtk2_ardour\piano_roll_header.h"
+				>
+			</File>
+			<File
+				RelativePath="..\gtk2_ardour\pianokeyboard.h"
 				>
 			</File>
 			<File
@@ -2039,6 +2123,10 @@
 			</File>
 			<File
 				RelativePath="..\gtk2_ardour\plugin_presets_ui.h"
+				>
+			</File>
+			<File
+				RelativePath="..\gtk2_ardour\plugin_scan_dialog.h"
 				>
 			</File>
 			<File
@@ -2282,7 +2370,7 @@
 				>
 			</File>
 			<File
-				RelativePath="..\gtk2_ardour\startup.h"
+				RelativePath="..\gtk2_ardour\startup_fsm.h"
 				>
 			</File>
 			<File
@@ -2323,10 +2411,6 @@
 			</File>
 			<File
 				RelativePath="..\gtk2_ardour\sys_ex.h"
-				>
-			</File>
-			<File
-				RelativePath="..\gtk2_ardour\tape_region_view.h"
 				>
 			</File>
 			<File
@@ -2455,6 +2539,10 @@
 			</File>
 			<File
 				RelativePath="..\gtk2_ardour\video_tool_paths.h"
+				>
+			</File>
+			<File
+				RelativePath="..\gtk2_ardour\virtual_keyboard_window.h"
 				>
 			</File>
 			<File

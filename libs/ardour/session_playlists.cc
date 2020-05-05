@@ -1,21 +1,25 @@
 /*
-    Copyright (C) 2009 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2009-2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2009-2016 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2011-2012 David Robillard <d@drobilla.net>
+ * Copyright (C) 2013-2016 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2015-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2016 Tim Mayberry <mojofunk@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 #include <vector>
 
 #include "ardour/debug.h"
@@ -241,6 +245,24 @@ SessionPlaylists::unassigned (std::list<boost::shared_ptr<Playlist> > & list)
 }
 
 void
+SessionPlaylists::update_orig_2X (PBD::ID old_orig, PBD::ID new_orig)
+{
+	Glib::Threads::Mutex::Lock lm (lock);
+
+	for (List::iterator i = playlists.begin(); i != playlists.end(); ++i) {
+		if ((*i)->get_orig_track_id() == old_orig) {
+			(*i)->set_orig_track_id (new_orig);
+		}
+	}
+
+	for (List::iterator i = unused_playlists.begin(); i != unused_playlists.end(); ++i) {
+		if ((*i)->get_orig_track_id() == old_orig) {
+			(*i)->set_orig_track_id (new_orig);
+		}
+	}
+}
+
+void
 SessionPlaylists::get (vector<boost::shared_ptr<Playlist> >& s) const
 {
 	Glib::Threads::Mutex::Lock lm (lock);
@@ -425,7 +447,7 @@ SessionPlaylists::maybe_delete_unused (boost::function<int(boost::shared_ptr<Pla
 			// delete this and all later
 			delete_remaining = true;
 
-			/* fall through */
+			/* fallthrough */
 		case 1:
 			// delete this
 			playlists_tbd.push_back (*x);
@@ -462,6 +484,7 @@ SessionPlaylists::load (Session& session, const XMLNode& node)
 
 		if ((playlist = XMLPlaylistFactory (session, **niter)) == 0) {
 			error << _("Session: cannot create Playlist from XML description.") << endmsg;
+			return -1;
 		}
 	}
 

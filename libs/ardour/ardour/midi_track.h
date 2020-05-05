@@ -1,21 +1,23 @@
 /*
-    Copyright (C) 2006 Paul Davis
-    Author: David Robillard
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2006-2015 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2009-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_midi_track_h__
 #define __ardour_midi_track_h__
@@ -36,12 +38,12 @@ class Session;
 class LIBARDOUR_API MidiTrack : public Track
 {
 public:
-	MidiTrack (Session&, std::string name, TrackMode m = Normal);
+	MidiTrack (Session&, std::string name = "", TrackMode m = Normal);
 	~MidiTrack ();
 
 	int init ();
 
-	void realtime_locate ();
+	void realtime_locate (bool);
 	void non_realtime_locate (samplepos_t);
 
 	bool can_be_record_enabled ();
@@ -64,7 +66,8 @@ public:
 	                  boost::shared_ptr<Processor> endpoint,
 	                  bool                         include_endpoint,
 	                  bool                         for_export,
-	                  bool                         for_freeze);
+	                  bool                         for_freeze,
+	                  MidiStateTracker&            tracker);
 
 	int set_state (const XMLNode&, int version);
 
@@ -128,10 +131,14 @@ public:
 	MonitorState get_auto_monitoring_state () const;
 
 	MidiBuffer const& immediate_event_buffer () const { return _immediate_event_buffer; }
+	MidiRingBuffer<samplepos_t>& immediate_events () { return _immediate_events; }
 
 	void set_input_active (bool);
 	bool input_active () const;
 	PBD::Signal0<void> InputActiveChanged;
+
+	void realtime_handle_transport_stopped ();
+	void region_edited (boost::shared_ptr<Region>);
 
 protected:
 
@@ -168,6 +175,9 @@ private:
 	/** Update automation controls to reflect any changes in buffers. */
 	void update_controls (BufferSet const& bufs);
 	void restore_controls ();
+
+	void playlist_contents_changed ();
+	PBD::ScopedConnection playlist_content_change_connection;
 };
 
 } /* namespace ARDOUR*/

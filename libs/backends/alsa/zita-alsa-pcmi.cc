@@ -53,6 +53,7 @@ Alsa_pcmi::Alsa_pcmi (
 	: _fsamp (fsamp)
 	, _fsize (fsize)
 	, _play_nfrag (play_nfrag)
+	, _real_nfrag (play_nfrag)
 	, _capt_nfrag (capt_nfrag)
 	, _debug (debug)
 	, _state (-1)
@@ -100,7 +101,7 @@ int Alsa_pcmi::pcm_start (void)
 	if (_play_handle)
 	{
 		n = snd_pcm_avail_update (_play_handle);
-		if (n != _fsize * _play_nfrag)
+		if (n < _fsize * _play_nfrag)
 		{
 			if (_debug & DEBUG_STAT) fprintf  (stderr, "Alsa_pcmi: full buffer not available at start.\n");
 			return -1;
@@ -229,14 +230,18 @@ snd_pcm_sframes_t Alsa_pcmi::pcm_wait (void)
 	if (_play_handle && (play_av = snd_pcm_avail_update (_play_handle)) < 0)
 	{
 		_state = -1;
-		recover ();
+		if (!recover ()) {
+			_state = 1;
+		}
 		return 0;
 	}
 	capt_av = 999999999;
 	if (_capt_handle && (capt_av = snd_pcm_avail_update (_capt_handle)) < 0)
 	{
 		_state = -1;
-		recover ();
+		if (!recover ()) {
+			_state = 1;
+		}
 		return 0;
 	}
 
@@ -363,7 +368,7 @@ void Alsa_pcmi::printinfo (void)
 		fprintf (stdout, "\n  nchan  : %d\n", _play_nchan);
 		fprintf (stdout, "  fsamp  : %d\n", _fsamp);
 		fprintf (stdout, "  fsize  : %ld\n", _fsize);
-		fprintf (stdout, "  nfrag  : %d\n", _play_nfrag);
+		fprintf (stdout, "  nfrag  : %d\n", _real_nfrag);
 		fprintf (stdout, "  format : %s\n", snd_pcm_format_name (_play_format));
 	}
 	else fprintf (stdout, " not enabled\n");
@@ -480,11 +485,9 @@ void Alsa_pcmi::initialise (const char *play_name, const char *capt_name, const 
 			_state = -4;
 			return;
 		}
-		if (snd_pcm_hw_params_get_periods (_play_hwpar, &nfrag, &dir) || (nfrag != _play_nfrag) || dir)
+		if (snd_pcm_hw_params_get_periods (_play_hwpar, &_real_nfrag, &dir) || (_real_nfrag != _play_nfrag) || dir)
 		{
-			if (_debug & DEBUG_INIT) fprintf (stderr, "Alsa_pcmi: can't get requested number of periods for playback.\n");
-			_state = -5;
-			return;
+			if (_debug & DEBUG_INIT) fprintf (stderr, "Alsa_pcmi warning: requested %u periods for playback, using %u.\n", _play_nfrag, _real_nfrag);
 		}
 
 		snd_pcm_hw_params_get_format (_play_hwpar, &_play_format);
@@ -594,9 +597,7 @@ void Alsa_pcmi::initialise (const char *play_name, const char *capt_name, const 
 		}
 		if (snd_pcm_hw_params_get_periods (_capt_hwpar, &nfrag, &dir) || (nfrag != _capt_nfrag) || dir)
 		{
-			if (_debug & DEBUG_INIT) fprintf (stderr, "Alsa_pcmi: can't get requested number of periods for capture.\n");
-			_state = -5;
-			return;
+			if (_debug & DEBUG_INIT) fprintf (stderr, "Alsa_pcmi warning: requested %u periods for playback, using %u.\n", _capt_nfrag, nfrag);
 		}
 
 		if (_play_handle) _synced = ! snd_pcm_link (_play_handle, _capt_handle);
@@ -770,16 +771,24 @@ int Alsa_pcmi::set_hwpar (snd_pcm_t *handle,  snd_pcm_hw_params_t *hwpar, const 
 				sname, _fsize);
 		return -4;
 	}
-	if (snd_pcm_hw_params_set_periods (handle, hwpar, nfrag, 0) < 0)
-	{
-		if (_debug & DEBUG_INIT) fprintf (stderr, "Alsa_pcmi: can't set %s periods to %u.\n",
-				sname, nfrag);
+
+	unsigned int nf = nfrag;
+	snd_pcm_hw_params_set_periods_min (handle, hwpar, &nf, NULL);
+	if (nf < nfrag) {
+		nf = nfrag;
+	}
+	if (snd_pcm_hw_params_set_periods_near (handle, hwpar, &nf, NULL) < 0) {
+		if (_debug & DEBUG_INIT) fprintf (stderr, "Alsa_pcmi: can't set %s periods to %u (requested %u).\n",
+				sname, nf, nfrag);
 		return -5;
 	}
-	if (snd_pcm_hw_params_set_buffer_size (handle, hwpar, _fsize * nfrag) < 0)
+
+	if (_debug & DEBUG_INIT) fprintf (stderr, "Alsa_pcmi: use %d periods for %s (requested %u).\n", nf, sname, nfrag);
+
+	if (snd_pcm_hw_params_set_buffer_size (handle, hwpar, _fsize * nf) < 0)
 	{
 		if (_debug & DEBUG_INIT) fprintf (stderr, "Alsa_pcmi: can't set %s buffer length to %lu.\n",
-				sname, _fsize * nfrag);
+				sname, _fsize * nf);
 		return -4;
 	}
 	if (snd_pcm_hw_params (handle, hwpar) < 0)
@@ -811,6 +820,12 @@ int Alsa_pcmi::set_swpar (snd_pcm_t *handle, snd_pcm_sw_params_t *swpar, const c
 				sname, _fsize);
 		return -1;
 	}
+
+	if (handle == _play_handle && snd_pcm_sw_params_set_start_threshold (_play_handle, _play_swpar, 0U) < 0) {
+		if (_debug & DEBUG_INIT) fprintf (stderr, "Alsa_pcmi: can't set %s start-threshold.\n", sname);
+		return -1;
+	}
+
 	if ((err = snd_pcm_sw_params (handle, swpar)) < 0)
 	{
 		if (_debug & DEBUG_INIT) fprintf (stderr, "Alsa_pcmi: can't set %s software parameters.\n",

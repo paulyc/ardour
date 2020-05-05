@@ -1,21 +1,22 @@
 /*
-    Copyright (C) 2013 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2013-2018 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2013 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2014-2018 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __libardour_jack_audiobackend_h__
 #define __libardour_jack_audiobackend_h__
@@ -29,6 +30,8 @@
 
 #include <boost/shared_ptr.hpp>
 
+#include "pbd/stacktrace.h"
+
 #include "weak_libjack.h"
 
 #include "ardour/audio_backend.h"
@@ -37,6 +40,17 @@ namespace ARDOUR {
 
 class JackConnection;
 class JACKSession;
+
+class JackPort : public ProtoPort
+{
+  public:
+	JackPort (jack_port_t* p) : jack_ptr (p) {}
+	~JackPort() { }
+
+  private:
+	friend class JACKAudioBackend;
+	jack_port_t* jack_ptr;
+};
 
 class JACKAudioBackend : public AudioBackend {
   public:
@@ -57,7 +71,7 @@ class JACKAudioBackend : public AudioBackend {
 
     std::vector<float> available_sample_rates (const std::string& device) const;
     std::vector<uint32_t> available_buffer_sizes (const std::string& device) const;
-    std::vector<uint32_t> available_period_sizes (const std::string& driver) const;
+    std::vector<uint32_t> available_period_sizes (const std::string& driver, const std::string& device) const;
     uint32_t available_input_channel_count (const std::string& device) const;
     uint32_t available_output_channel_count (const std::string& device) const;
 
@@ -132,7 +146,7 @@ class JACKAudioBackend : public AudioBackend {
     int         set_port_name (PortHandle, const std::string&);
     std::string get_port_name (PortHandle) const;
     PortFlags get_port_flags (PortHandle) const;
-    PortHandle  get_port_by_name (const std::string&) const;
+    PortPtr  get_port_by_name (const std::string&) const;
     int get_port_property (PortHandle, const std::string& key, std::string& value, std::string& type) const;
     int set_port_property (PortHandle, const std::string& key, const std::string& value, const std::string& type);
 
@@ -140,7 +154,7 @@ class JACKAudioBackend : public AudioBackend {
 
     DataType port_data_type (PortHandle) const;
 
-    PortHandle register_port (const std::string& shortname, ARDOUR::DataType, ARDOUR::PortFlags);
+    PortPtr register_port (const std::string& shortname, ARDOUR::DataType, ARDOUR::PortFlags);
     void  unregister_port (PortHandle);
 
     bool  connected (PortHandle, bool process_callback_safe);
@@ -288,6 +302,9 @@ class JACKAudioBackend : public AudioBackend {
     static void _registration_callback (jack_port_id_t, int, void *);
     static void _connect_callback (jack_port_id_t, jack_port_id_t, int, void *);
 
+    typedef std::map<void*,boost::shared_ptr<JackPort> > JackPorts;
+    mutable SerializedRCUManager<JackPorts> _jack_ports; /* can be modified in ::get_port_by_name () */
+
     void connect_callback (jack_port_id_t, jack_port_id_t, int);
 
     ChanCount n_physical (unsigned long flags) const;
@@ -309,4 +326,3 @@ class JACKAudioBackend : public AudioBackend {
 } // namespace
 
 #endif /* __ardour_audiobackend_h__ */
-

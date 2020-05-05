@@ -1,21 +1,29 @@
 /*
-    Copyright (C) 2000-2003 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2005-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2016 David Robillard <d@drobilla.net>
+ * Copyright (C) 2006 Sampo Savolainen <v2@iki.fi>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2014-2018 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2014-2018 Colin Fletcher <colin.m.fletcher@googlemail.com>
+ * Copyright (C) 2014-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015-2017 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2015 André Nusser <andre.nusser@googlemail.com>
+ * Copyright (C) 2016-2017 Tim Mayberry <mojofunk@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <stdint.h>
 #include <set>
@@ -601,6 +609,7 @@ Playlist::flush_notifications (bool from_undo)
 		crossfade_ranges.push_back ((*s)->range ());
 		remove_dependents (*s);
 		RegionRemoved (boost::weak_ptr<Region> (*s)); /* EMIT SIGNAL */
+		Region::RegionPropertyChanged(*s, Properties::hidden);
 	}
 
 	for (s = pending_adds.begin(); s != pending_adds.end(); ++s) {
@@ -1754,7 +1763,6 @@ Playlist::region_changed (const PropertyChange& what_changed, boost::shared_ptr<
 {
 	PropertyChange our_interests;
 	PropertyChange bounds;
-	PropertyChange pos_and_length;
 	bool save = false;
 
 	if (in_set_state || in_flush) {
@@ -1764,17 +1772,22 @@ Playlist::region_changed (const PropertyChange& what_changed, boost::shared_ptr<
 	our_interests.add (Properties::muted);
 	our_interests.add (Properties::layer);
 	our_interests.add (Properties::opaque);
+	our_interests.add (Properties::contents);
 
 	bounds.add (Properties::start);
 	bounds.add (Properties::position);
 	bounds.add (Properties::length);
 
-	pos_and_length.add (Properties::position);
-	pos_and_length.add (Properties::length);
+	bool send_contents = false;
 
 	if (what_changed.contains (bounds)) {
 		region_bounds_changed (what_changed, region);
 		save = !(_splicing || _nudging);
+		send_contents = true;
+	}
+
+	if (what_changed.contains (Properties::contents)) {
+		send_contents = true;
 	}
 
 	if (what_changed.contains (Properties::position) && !what_changed.contains (Properties::length)) {
@@ -1791,6 +1804,10 @@ Playlist::region_changed (const PropertyChange& what_changed, boost::shared_ptr<
 
 	if (what_changed.contains (our_interests)) {
 		save = true;
+	}
+
+	if (send_contents || save) {
+		notify_contents_changed ();
 	}
 
 	mark_session_dirty ();
@@ -1987,10 +2004,6 @@ Playlist::regions_with_end_within (Evoral::Range<samplepos_t> range)
 	return rlist;
 }
 
-/** @param start Range start.
- *  @param end Range end.
- *  @return regions which have some part within this range.
- */
 boost::shared_ptr<RegionList>
 Playlist::regions_touched (samplepos_t start, samplepos_t end)
 {
@@ -2276,8 +2289,9 @@ Playlist::set_state (const XMLNode& node, int version)
 		_set_sort_id ();
 	}
 
-	/* XXX legacy session: fix up later */
+	/* XXX legacy session: fix up later - :: update_orig_2X() */
 	node.get_property (X_("orig-diskstream-id"), _orig_track_id);
+	node.get_property (X_("orig_diskstream_id"), _orig_track_id);
 
 	node.get_property (X_("orig-track-id"), _orig_track_id);
 	node.get_property (X_("frozen"), _frozen);
@@ -2395,6 +2409,7 @@ Playlist::state (bool full_state)
 		node->set_property ("combine-ops", _combine_ops);
 
 		for (RegionList::iterator i = regions.begin(); i != regions.end(); ++i) {
+			assert ((*i)->sources().size() > 0 && (*i)->master_sources().size() > 0);
 			node->add_child_nocopy ((*i)->get_state());
 		}
 	}
@@ -3163,6 +3178,10 @@ Playlist::combine (const RegionList& r)
 
 	boost::shared_ptr<Region> compound_region = RegionFactory::create (parent_region, plist, true);
 
+	for (SourceList::iterator s = sources.begin(); s != sources.end(); ++s) {
+		boost::dynamic_pointer_cast<PlaylistSource>(*s)->set_owner (compound_region->id());
+	}
+
 	/* remove all the selected regions from the current playlist */
 
 	freeze ();
@@ -3220,7 +3239,7 @@ Playlist::uncombine (boost::shared_ptr<Region> target)
 	RegionFactory::CompoundAssociations& cassocs (RegionFactory::compound_associations());
 	sampleoffset_t move_offset = 0;
 
-	/* there are two possibilities here:
+	/* there are three possibilities here:
 	   1) the playlist that the playlist source was based on
 	   is us, so just add the originals (which belonged to
 	   us anyway) back in the right place.
@@ -3229,8 +3248,14 @@ Playlist::uncombine (boost::shared_ptr<Region> target)
 	   is NOT us, so we need to make copies of each of
 	   the original regions that we find, and add them
 	   instead.
+
+	   3) target region is a copy of a compount region previously
+	   created. In this case we will also need to make copies ot each of
+	   the original regions, and add them instead.
 	*/
-	bool same_playlist = (pls->original() == id());
+
+	const bool need_copies = (boost::dynamic_pointer_cast<PlaylistSource> (pls)->owner() != target->id()) ||
+		(pls->original() != id());
 
 	for (RegionList::const_iterator i = rl.begin(); i != rl.end(); ++i) {
 
@@ -3243,7 +3268,7 @@ Playlist::uncombine (boost::shared_ptr<Region> target)
 		}
 
 		boost::shared_ptr<Region> original (ca->second);
-		cassocs.erase(ca);
+
 		bool modified_region;
 
 		if (i == rl.begin()) {
@@ -3252,7 +3277,7 @@ Playlist::uncombine (boost::shared_ptr<Region> target)
 			adjusted_end = adjusted_start + target->length();
 		}
 
-		if (!same_playlist) {
+		if (need_copies) {
 			samplepos_t pos = original->position();
 			/* make a copy, but don't announce it */
 			original = RegionFactory::create (original, false);

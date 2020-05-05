@@ -5,6 +5,7 @@
  * Modified for Ardour and released under the same terms.
  */
 
+#include <string.h>
 #include <iostream>
 
 #include "pbd/stacktrace.h"
@@ -85,13 +86,17 @@ XMLTree::read_internal(bool validate)
 		_doc = 0;
 	}
 
+	/* Calling this prevents libxml2 from treating whitespace as active
+	   nodes. It needs to be called before we create a parser context.
+	*/
+	xmlKeepBlanksDefault(0);
+
 	/* create a parser context */
 	xmlParserCtxtPtr ctxt = xmlNewParserCtxt();
 	if (ctxt == NULL) {
 		return false;
 	}
 
-	xmlKeepBlanksDefault(0);
 	/* parse the file, activating the DTD validation option */
 	if (validate) {
 		_doc = xmlCtxtReadFile(ctxt, _filename.c_str(), NULL, XML_PARSE_DTDVALID);
@@ -120,7 +125,7 @@ XMLTree::read_internal(bool validate)
 }
 
 bool
-XMLTree::read_buffer(const string& buffer, bool to_tree_doc)
+XMLTree::read_buffer (char const* buffer, bool to_tree_doc)
 {
 	xmlDocPtr doc;
 
@@ -129,7 +134,9 @@ XMLTree::read_buffer(const string& buffer, bool to_tree_doc)
 	delete _root;
 	_root = 0;
 
-	doc = xmlParseMemory(const_cast<char*>(buffer.c_str()), buffer.length());
+	xmlKeepBlanksDefault(0);
+
+	doc = xmlParseMemory (buffer, ::strlen(buffer));
 	if (!doc) {
 		return false;
 	}
@@ -482,6 +489,12 @@ XMLNode::attribute_value()
 XMLNode*
 XMLNode::add_content(const string& c)
 {
+	if (c.empty ()) {
+		/* this would add a "</>" child, leading to invalid XML.
+		 * Also in XML, empty string content is equivalent to no content.
+		 */
+		return NULL;
+	}
 	return add_child_copy(XMLNode (string(), c));
 }
 
@@ -760,16 +773,16 @@ static XMLSharedNodeList* find_impl(xmlXPathContext* ctxt, const string& xpath)
 	xmlXPathObject* result = xmlXPathEval((const xmlChar*)xpath.c_str(), ctxt);
 
 	if (!result) {
-		xmlXPathFreeContext(ctxt);
 		xmlFreeDoc(ctxt->doc);
+		xmlXPathFreeContext(ctxt);
 
 		throw XMLException("Invalid XPath: " + xpath);
 	}
 
 	if (result->type != XPATH_NODESET) {
 		xmlXPathFreeObject(result);
-		xmlXPathFreeContext(ctxt);
 		xmlFreeDoc(ctxt->doc);
+		xmlXPathFreeContext(ctxt);
 
 		throw XMLException("Only nodeset result types are supported.");
 	}

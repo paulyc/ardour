@@ -1,22 +1,26 @@
 /*
-    Copyright (C) 2006-2009 Paul Davis
-    Some portions Copyright (C) Sophia Poirier.
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2006-2016 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2010 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2014-2017 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2015-2016 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2018 Julien "_FrnchFrgg_" RIVAUD <frnchfrgg@free.fr>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <sstream>
 #include <fstream>
@@ -1598,7 +1602,7 @@ AUPlugin::connect_and_run (BufferSet& bufs,
 	bool inplace = true; // TODO check plugin-insert in-place ?
 	ChanMapping::Mappings inmap (in_map.mappings ());
 	ChanMapping::Mappings outmap (out_map.mappings ());
-	if (outmap[DataType::AUDIO].size () == 0) {
+	if (outmap[DataType::AUDIO].size () == 0 || inmap[DataType::AUDIO].size() == 0) {
 		inplace = false;
 	}
 	if (inmap[DataType::AUDIO].size() > 0 && inmap != outmap) {
@@ -1663,17 +1667,19 @@ AUPlugin::connect_and_run (BufferSet& bufs,
 
 		for (uint32_t i = 0; i < cnt; ++i) {
 			buffers->mBuffers[i].mNumberChannels = 1;
-			buffers->mBuffers[i].mDataByteSize = nframes * sizeof (Sample);
-			/* setting this to 0 indicates to the AU that it can provide buffers here
+			/* setting this to 0 indicates to the AU that it *can* provide buffers here
 			 * if necessary. if it can process in-place, it will use the buffers provided
 			 * as input by ::render_callback() above.
 			 *
 			 * a non-null values tells the plugin to render into the buffer pointed
 			 * at by the value.
+			 * https://developer.apple.com/documentation/audiotoolbox/1438430-audiounitrender?language=objc
 			 */
 			if (inplace) {
+				buffers->mBuffers[i].mDataByteSize = 0;
 				buffers->mBuffers[i].mData = 0;
 			} else {
+				buffers->mBuffers[i].mDataByteSize = nframes * sizeof (Sample);
 				bool valid = false;
 				uint32_t idx = out_map.get (DataType::AUDIO, i + busoff, &valid);
 				if (valid) {
@@ -1700,7 +1706,12 @@ AUPlugin::connect_and_run (BufferSet& bufs,
 			for (uint32_t i = 0; i < limit; ++i) {
 				bool valid = false;
 				uint32_t idx = out_map.get (DataType::AUDIO, i + busoff, &valid);
-				if (!valid) continue;
+				if (!valid) {
+					continue;
+				}
+				if (buffers->mBuffers[i].mData == 0 || buffers->mBuffers[i].mNumberChannels != 1) {
+					continue;
+				}
 				used_outputs.set (i + busoff);
 				Sample* expected_buffer_address = bufs.get_audio (idx).data (offset);
 				if (expected_buffer_address != buffers->mBuffers[i].mData) {
@@ -2028,7 +2039,7 @@ AUPlugin::add_state (XMLNode* root) const
 
 	XMLTree t;
 
-	if (t.read_buffer (string ((const char*) CFDataGetBytePtr (xmlData), CFDataGetLength (xmlData)))) {
+	if (t.read_buffer (string ((const char*) CFDataGetBytePtr (xmlData), CFDataGetLength (xmlData)).c_str())) {
 		if (t.root()) {
 			root->add_child_copy (*t.root());
 		}
@@ -2050,7 +2061,6 @@ AUPlugin::set_state(const XMLNode& node, int version)
 		return -1;
 	}
 
-#ifndef NO_PLUGIN_STATE
 	if (node.children().empty()) {
 		return -1;
 	}
@@ -2086,7 +2096,6 @@ AUPlugin::set_state(const XMLNode& node, int version)
 		}
 		CFRelease (propertyList);
 	}
-#endif
 
 	Plugin::set_state (node, version);
 	return ret;
@@ -2540,11 +2549,7 @@ AUPlugin::has_editor () const
 AUPluginInfo::AUPluginInfo (boost::shared_ptr<CAComponentDescription> d)
 	: descriptor (d)
 	, version (0)
-{
-	type = ARDOUR::AudioUnit;
-}
-
-AUPluginInfo::~AUPluginInfo ()
+	, max_outputs (0)
 {
 	type = ARDOUR::AudioUnit;
 }
@@ -2582,7 +2587,7 @@ AUPluginInfo::get_presets (bool user_only) const
 {
 	std::vector<Plugin::PresetRecord> p;
 	boost::shared_ptr<CAComponent> comp;
-#ifndef NO_PLUGIN_STATE
+
 	try {
 		comp = boost::shared_ptr<CAComponent>(new CAComponent(*descriptor));
 		if (!comp->IsValid()) {
@@ -2653,7 +2658,6 @@ AUPluginInfo::get_presets (bool user_only) const
 	CFRelease (presets);
 	unit->Uninitialize ();
 
-#endif // NO_PLUGIN_STATE
 	return p;
 }
 
@@ -2914,6 +2918,8 @@ AUPluginInfo::discover_by_description (PluginInfoList& plugs, CAComponentDescrip
 
 		const int rv = cached_io_configuration (info->unique_id, info->version, cacomp, info->cache, info->name);
 
+		info->max_outputs = 0;
+
 		if (rv == 0) {
 			/* here we have to map apple's wildcard system to a simple pair
 			   of values. in ::can_do() we use the whole system, but here
@@ -2928,8 +2934,18 @@ AUPluginInfo::discover_by_description (PluginInfoList& plugs, CAComponentDescrip
 			   info to the user, which should perhaps be revisited.
 			*/
 
-			int32_t possible_in = info->cache.io_configs.front().first;
-			int32_t possible_out = info->cache.io_configs.front().second;
+			const vector<pair<int,int> >& ioc (info->cache.io_configs);
+			for (vector<pair<int,int> >::const_iterator i = ioc.begin(); i != ioc.end(); ++i) {
+				int32_t possible_out = i->second;
+				if (possible_out < 0) {
+					continue;
+				} else if (possible_out > info->max_outputs) {
+					info->max_outputs = possible_out;
+				}
+			}
+
+			int32_t possible_in = ioc.front().first;
+			int32_t possible_out = ioc.front().second;
 
 			if (possible_in > 0) {
 				info->n_inputs.set (DataType::AUDIO, possible_in);

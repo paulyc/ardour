@@ -1,22 +1,21 @@
 /*
-    Copyright (C) 2016 Robin Gareus <robin@gareus.org
-    Copyright (C) 2009-2012 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2016-2018 Len Ovens <len@ovenwerks.net>
+ * Copyright (C) 2016 Robin Gareus <robin@gareus.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <iostream>
 #include <list>
@@ -233,10 +232,10 @@ OSC_GUI::OSC_GUI (OSC& p)
 	sttable->attach (audio_buses, 1, 2, stn, stn+1, AttachOptions(FILL|EXPAND), AttachOptions(0), 0, 0);
 	++stn;
 
-	label = manage (new Gtk::Label(_("Audio Auxes:")));
+	label = manage (new Gtk::Label(_("Foldback Busses:")));
 	label->set_alignment(1, .5);
 	sttable->attach (*label, 0, 1, stn, stn+1, AttachOptions(FILL|EXPAND), AttachOptions(0));
-	sttable->attach (audio_auxes, 1, 2, stn, stn+1, AttachOptions(FILL|EXPAND), AttachOptions(0), 0, 0);
+	sttable->attach (foldback_busses, 1, 2, stn, stn+1, AttachOptions(FILL|EXPAND), AttachOptions(0), 0, 0);
 	++stn;
 
 	label = manage (new Gtk::Label(_("Midi Busses:")));
@@ -404,7 +403,7 @@ OSC_GUI::OSC_GUI (OSC& p)
 	audio_tracks.signal_clicked().connect (sigc::mem_fun (*this, &OSC_GUI::set_bitsets));
 	midi_tracks.signal_clicked().connect (sigc::mem_fun (*this, &OSC_GUI::set_bitsets));
 	audio_buses.signal_clicked().connect (sigc::mem_fun (*this, &OSC_GUI::set_bitsets));
-	audio_auxes.signal_clicked().connect (sigc::mem_fun (*this, &OSC_GUI::set_bitsets));
+	foldback_busses.signal_clicked().connect (sigc::mem_fun (*this, &OSC_GUI::set_bitsets));
 	midi_buses.signal_clicked().connect (sigc::mem_fun (*this, &OSC_GUI::set_bitsets));
 	control_masters.signal_clicked().connect (sigc::mem_fun (*this, &OSC_GUI::set_bitsets));
 	master_type.signal_clicked().connect (sigc::mem_fun (*this, &OSC_GUI::set_bitsets));
@@ -661,7 +660,7 @@ OSC_GUI::reshow_values ()
 	control_masters.set_active(def_strip & 16);
 	master_type.set_active(def_strip & 32);
 	monitor_type.set_active(def_strip & 64);
-	audio_auxes.set_active(def_strip & 128);
+	foldback_busses.set_active(def_strip & 128);
 	selected_tracks.set_active(def_strip & 256);
 	hidden_tracks.set_active(def_strip & 512);
 	usegroups.set_active(def_strip & 1024);
@@ -764,7 +763,7 @@ OSC_GUI::calculate_strip_types ()
 	if (monitor_type.get_active()) {
 		stvalue += 64;
 	}
-	if (audio_auxes.get_active()) {
+	if (foldback_busses.get_active()) {
 		stvalue += 128;
 	}
 	if (selected_tracks.get_active()) {

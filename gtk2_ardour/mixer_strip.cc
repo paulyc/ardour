@@ -1,20 +1,33 @@
 /*
-    Copyright (C) 2000-2006 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2005-2006 Nick Mainsbridge <mainsbridge@gmail.com>
+ * Copyright (C) 2005-2006 Taybin Rutkin <taybin@taybin.com>
+ * Copyright (C) 2005-2007 Doug McLain <doug@nostar.net>
+ * Copyright (C) 2005-2017 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2006-2014 David Robillard <d@drobilla.net>
+ * Copyright (C) 2007-2012 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2008 Hans Baier <hansfbaier@googlemail.com>
+ * Copyright (C) 2009-2010 Sakari Bergen <sakari.bergen@beatwaves.net>
+ * Copyright (C) 2012-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013-2016 John Emmas <john@creativepost.co.uk>
+ * Copyright (C) 2014-2018 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2015-2016 Tim Mayberry <mojofunk@gmail.com>
+ * Copyright (C) 2016-2017 Julien "_FrnchFrgg_" RIVAUD <frnchfrgg@free.fr>
+ * Copyright (C) 2018 Len Ovens <len@ovenwerks.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <cmath>
 #include <list>
@@ -106,6 +119,7 @@ MixerStrip::MixerStrip (Mixer_UI& mx, Session* sess, bool in_mixer)
 	, _comment_button (_("Comments"))
 	, trim_control (ArdourKnob::default_elements, ArdourKnob::Flags (ArdourKnob::Detent | ArdourKnob::ArcToZero))
 	, _visibility (X_("mixer-element-visibility"))
+	, _suspend_menu_callbacks (false)
 	, control_slave_ui (sess)
 {
 	init ();
@@ -138,6 +152,7 @@ MixerStrip::MixerStrip (Mixer_UI& mx, Session* sess, boost::shared_ptr<Route> rt
 	, _comment_button (_("Comments"))
 	, trim_control (ArdourKnob::default_elements, ArdourKnob::Flags (ArdourKnob::Detent | ArdourKnob::ArcToZero))
 	, _visibility (X_("mixer-element-visibility"))
+	, _suspend_menu_callbacks (false)
 	, control_slave_ui (sess)
 {
 	init ();
@@ -167,7 +182,7 @@ MixerStrip::init ()
 	hide_button.set_tweaks (ArdourButton::Square);
 	set_tooltip (width_button, t);
 
-	hide_button.set_icon (ArdourIcon::CloseCross);
+	hide_button.set_icon (ArdourIcon::HideEye);
 	hide_button.set_tweaks (ArdourButton::Square);
 	set_tooltip (&hide_button, _("Hide this mixer strip"));
 
@@ -205,10 +220,8 @@ MixerStrip::init ()
 
 	solo_iso_table.set_homogeneous (true);
 	solo_iso_table.set_spacings (2);
-	if (!ARDOUR::Profile->get_trx()) {
-		solo_iso_table.attach (*solo_isolated_led, 0, 1, 0, 1);
-		solo_iso_table.attach (*solo_safe_led, 1, 2, 0, 1);
-	}
+	solo_iso_table.attach (*solo_isolated_led, 0, 1, 0, 1);
+	solo_iso_table.attach (*solo_safe_led, 1, 2, 0, 1);
 	solo_iso_table.show ();
 
 	rec_mon_table.set_homogeneous (true);
@@ -218,9 +231,6 @@ MixerStrip::init ()
 		rec_mon_table.resize (1, 3);
 		rec_mon_table.attach (*monitor_input_button, 1, 2, 0, 1);
 		rec_mon_table.attach (*monitor_disk_button, 2, 3, 0, 1);
-	} else if (!ARDOUR::Profile->get_trx()) {
-		rec_mon_table.attach (*monitor_input_button, 1, 2, 0, 1);
-		rec_mon_table.attach (*monitor_disk_button, 1, 2, 1, 2);
 	}
 	rec_mon_table.show ();
 
@@ -274,6 +284,7 @@ MixerStrip::init ()
 	trim_control.StopGesture.connect(sigc::mem_fun(*this, &MixerStrip::trim_end_touch));
 	input_button_box.pack_start (trim_control, false, false);
 
+	global_vpacker.set_no_show_all ();
 	global_vpacker.set_border_width (1);
 	global_vpacker.set_spacing (0);
 
@@ -298,13 +309,11 @@ MixerStrip::init ()
 	number_label.set_tweaks (ArdourButton::OccasionalText);
 
 	global_vpacker.set_spacing (2);
-	if (!ARDOUR::Profile->get_trx()) {
-		global_vpacker.pack_start (width_hide_box, Gtk::PACK_SHRINK);
-		global_vpacker.pack_start (name_button, Gtk::PACK_SHRINK);
-		global_vpacker.pack_start (input_button_box, Gtk::PACK_SHRINK);
-		global_vpacker.pack_start (_invert_button_box, Gtk::PACK_SHRINK);
-		global_vpacker.pack_start (processor_box, true, true);
-	}
+	global_vpacker.pack_start (width_hide_box, Gtk::PACK_SHRINK);
+	global_vpacker.pack_start (name_button, Gtk::PACK_SHRINK);
+	global_vpacker.pack_start (input_button_box, Gtk::PACK_SHRINK);
+	global_vpacker.pack_start (_invert_button_box, Gtk::PACK_SHRINK);
+	global_vpacker.pack_start (processor_box, true, true);
 	global_vpacker.pack_start (panners, Gtk::PACK_SHRINK);
 	global_vpacker.pack_start (rec_mon_table, Gtk::PACK_SHRINK);
 	global_vpacker.pack_start (solo_iso_table, Gtk::PACK_SHRINK);
@@ -312,12 +321,8 @@ MixerStrip::init ()
 	global_vpacker.pack_start (gpm, Gtk::PACK_SHRINK);
 	global_vpacker.pack_start (control_slave_ui, Gtk::PACK_SHRINK);
 	global_vpacker.pack_start (bottom_button_table, Gtk::PACK_SHRINK);
-	if (!ARDOUR::Profile->get_trx()) {
-		global_vpacker.pack_start (output_button, Gtk::PACK_SHRINK);
-		global_vpacker.pack_start (_comment_button, Gtk::PACK_SHRINK);
-	} else {
-		global_vpacker.pack_start (name_button, Gtk::PACK_SHRINK);
-	}
+	global_vpacker.pack_start (output_button, Gtk::PACK_SHRINK);
+	global_vpacker.pack_start (_comment_button, Gtk::PACK_SHRINK);
 
 #ifndef MIXBUS
 	//add a spacer underneath the master bus;
@@ -350,9 +355,6 @@ MixerStrip::init ()
 
 	_packed = false;
 	_embedded = false;
-
-	_session->engine().Stopped.connect (*this, invalidator (*this), boost::bind (&MixerStrip::engine_stopped, this), gui_context());
-	_session->engine().Running.connect (*this, invalidator (*this), boost::bind (&MixerStrip::engine_running, this), gui_context());
 
 	input_button.signal_button_press_event().connect (sigc::mem_fun(*this, &MixerStrip::input_press), false);
 	input_button.signal_button_release_event().connect (sigc::mem_fun(*this, &MixerStrip::input_release), false);
@@ -578,8 +580,6 @@ MixerStrip::set_route (boost::shared_ptr<Route> rt)
 		solo_button->hide ();
 		mute_button->show ();
 		rec_mon_table.hide ();
-		solo_iso_table.set_sensitive(false);
-		control_slave_ui.set_sensitive(false);
 		if (monitor_section_button == 0) {
 			Glib::RefPtr<Action> act = ActionManager::get_action ("Mixer", "ToggleMonitorSection");
 			_session->MonitorChanged.connect (route_connections, invalidator (*this), boost::bind (&MixerStrip::monitor_changed, this), gui_context());
@@ -601,15 +601,9 @@ MixerStrip::set_route (boost::shared_ptr<Route> rt)
 		mute_button->show ();
 		solo_button->show ();
 		rec_mon_table.show ();
-		solo_iso_table.set_sensitive(true);
-		control_slave_ui.set_sensitive(true);
 	}
 
-	if (_mixer_owned && route()->is_master() ) {
-		spacer.show();
-	} else {
-		spacer.hide();
-	}
+	hide_master_spacer (false);
 
 	if (is_track()) {
 		monitor_input_button->show ();
@@ -659,8 +653,6 @@ MixerStrip::set_route (boost::shared_ptr<Route> rt)
 		if (ARDOUR::Profile->get_mixbus()) {
 			rec_mon_table.attach (*monitor_input_button, 1, 2, 0, 1);
 			rec_mon_table.attach (*monitor_disk_button, 2, 3, 0, 1);
-		} else if (ARDOUR::Profile->get_trx()) {
-			rec_mon_table.attach (*monitor_input_button, 1, 2, 0, 2);
 		} else {
 			rec_mon_table.attach (*monitor_input_button, 1, 2, 0, 1);
 			rec_mon_table.attach (*monitor_disk_button, 1, 2, 1, 2);
@@ -671,8 +663,17 @@ MixerStrip::set_route (boost::shared_ptr<Route> rt)
 		/* non-master bus */
 
 		if (!_route->is_master()) {
-			rec_mon_table.attach (*show_sends_button, 0, 1, 0, 2);
-			show_sends_button->show();
+			if (ARDOUR::Profile->get_mixbus()) {
+				rec_mon_table.attach (*show_sends_button, 0, 3, 0, 2);
+			} else {
+				rec_mon_table.attach (*show_sends_button, 0, 2, 0, 2);
+			}
+
+			if (_mixer_owned) {
+				show_sends_button->show();
+			} else {
+				show_sends_button->hide();
+			}
 		}
 	}
 
@@ -699,8 +700,6 @@ MixerStrip::set_route (boost::shared_ptr<Route> rt)
 
 	/* now force an update of all the various elements */
 
-	update_mute_display ();
-	update_solo_display ();
 	name_changed ();
 	comment_changed ();
 	route_group_changed ();
@@ -752,6 +751,7 @@ MixerStrip::set_route (boost::shared_ptr<Route> rt)
 	map_frozen();
 
 	show ();
+	update_sensitivity ();
 }
 
 void
@@ -787,19 +787,17 @@ MixerStrip::set_width_enum (Width w, void* owner)
 
 	const float scale = std::max(1.f, UIConfiguration::instance().get_ui_scale());
 
+	gpm.gain_automation_state_button.set_text (GainMeterBase::short_astate_string (gain_automation->automation_state()));
+
+	if (_route->panner()) {
+		((Gtk::Label*)panners.pan_automation_state_button.get_child())->set_text (GainMeterBase::short_astate_string (_route->pannable()->automation_state()));
+	}
+
 	switch (w) {
 	case Wide:
 
 		if (show_sends_button)  {
-			show_sends_button->set_text (_("Aux"));
-		}
-
-		gpm.gain_automation_state_button.set_text (
-				gpm.astate_string(gain_automation->automation_state()));
-
-		if (_route->panner()) {
-			((Gtk::Label*)panners.pan_automation_state_button.get_child())->set_text (
-					panners.astate_string(_route->panner()->automation_state()));
+			show_sends_button->set_text (_("Show Sends"));
 		}
 
 		{
@@ -813,17 +811,10 @@ MixerStrip::set_width_enum (Width w, void* owner)
 	case Narrow:
 
 		if (show_sends_button) {
-			show_sends_button->set_text (_("Snd"));
+			show_sends_button->set_text (_("Show"));
 		}
 
-		gpm.gain_automation_state_button.set_text (
-				gpm.short_astate_string(gain_automation->automation_state()));
 		gain_meter().setup_meters (); // recalc meter width
-
-		if (_route->panner()) {
-			((Gtk::Label*)panners.pan_automation_state_button.get_child())->set_text (
-			panners.short_astate_string(_route->panner()->automation_state()));
-		}
 
 		{
 			// panners expect an even number of horiz. pixels
@@ -934,10 +925,15 @@ MixerStrip::output_press (GdkEventButton *ev)
 			citems.pop_back ();
 		}
 
-		if (!ARDOUR::Profile->get_mixbus()) {
-			citems.push_back (SeparatorElem());
+		citems.push_back (SeparatorElem());
 
+		if (!ARDOUR::Profile->get_mixbus()) {
+			bool need_separator = false;
 			for (DataType::iterator i = DataType::begin(); i != DataType::end(); ++i) {
+				if (!_route->output()->can_add_port (*i)) {
+					continue;
+				}
+				need_separator = true;
 				citems.push_back (
 						MenuElem (
 							string_compose (_("Add %1 port"), (*i).to_i18n_string()),
@@ -945,9 +941,11 @@ MixerStrip::output_press (GdkEventButton *ev)
 							)
 						);
 			}
+			if (need_separator) {
+				citems.push_back (SeparatorElem());
+			}
 		}
 
-		citems.push_back (SeparatorElem());
 		citems.push_back (MenuElem (_("Routing Grid"), sigc::mem_fun (*(static_cast<RouteUI*>(this)), &RouteUI::edit_output_configuration)));
 
 		Gtkmm2ext::anchored_menu_popup(&output_menu, &output_button, "",
@@ -1040,7 +1038,13 @@ MixerStrip::input_press (GdkEventButton *ev)
 		}
 
 		citems.push_back (SeparatorElem());
+
+		bool need_separator = false;
 		for (DataType::iterator i = DataType::begin(); i != DataType::end(); ++i) {
+			if (!_route->input()->can_add_port (*i)) {
+				continue;
+			}
+			need_separator = true;
 			citems.push_back (
 				MenuElem (
 					string_compose (_("Add %1 port"), (*i).to_i18n_string()),
@@ -1048,8 +1052,10 @@ MixerStrip::input_press (GdkEventButton *ev)
 					)
 				);
 		}
+		if (need_separator) {
+			citems.push_back (SeparatorElem());
+		}
 
-		citems.push_back (SeparatorElem());
 		citems.push_back (MenuElem (_("Routing Grid"), sigc::mem_fun (*(static_cast<RouteUI*>(this)), &RouteUI::edit_input_configuration)));
 
 		Gtkmm2ext::anchored_menu_popup(&input_menu, &input_button, "",
@@ -1677,55 +1683,67 @@ MixerStrip::build_route_ops_menu ()
 	route_ops_menu = new Menu;
 	route_ops_menu->set_name ("ArdourContextMenu");
 
+	bool active = _route->active () || ARDOUR::Profile->get_mixbus();
+
 	MenuList& items = route_ops_menu->items();
 
-	items.push_back (MenuElem (_("Color..."), sigc::mem_fun (*this, &RouteUI::choose_color)));
+	if (active) {
 
-	items.push_back (MenuElem (_("Comments..."), sigc::mem_fun (*this, &RouteUI::open_comment_editor)));
+		items.push_back (MenuElem (_("Color..."), sigc::mem_fun (*this, &RouteUI::choose_color)));
 
-	items.push_back (MenuElem (_("Inputs..."), sigc::mem_fun (*this, &RouteUI::edit_input_configuration)));
+		items.push_back (MenuElem (_("Comments..."), sigc::mem_fun (*this, &RouteUI::open_comment_editor)));
 
-	items.push_back (MenuElem (_("Outputs..."), sigc::mem_fun (*this, &RouteUI::edit_output_configuration)));
+		items.push_back (MenuElem (_("Inputs..."), sigc::mem_fun (*this, &RouteUI::edit_input_configuration)));
 
-	if (!Profile->get_mixbus()) {
+		items.push_back (MenuElem (_("Outputs..."), sigc::mem_fun (*this, &RouteUI::edit_output_configuration)));
+
+		if (!Profile->get_mixbus()) {
+			items.push_back (SeparatorElem());
+		}
+
+		if (!_route->is_master()
+#ifdef MIXBUS
+				&& !_route->mixbus()
+#endif
+		   ) {
+			if (Profile->get_mixbus()) {
+				items.push_back (SeparatorElem());
+			}
+			items.push_back (MenuElem (_("Save As Template..."), sigc::mem_fun(*this, &RouteUI::save_as_template)));
+		}
+
+		if (!Profile->get_mixbus()) {
+			items.push_back (MenuElem (_("Rename..."), sigc::mem_fun(*this, &RouteUI::route_rename)));
+			/* do not allow rename if the track is record-enabled */
+			items.back().set_sensitive (!is_track() || !track()->rec_enable_control()->get_value());
+		}
+
 		items.push_back (SeparatorElem());
 	}
 
-	if (!_route->is_master()
+	if ((!_route->is_master() || !active)
 #ifdef MIXBUS
 			&& !_route->mixbus()
 #endif
-			) {
-		if (Profile->get_mixbus()) {
-			items.push_back (SeparatorElem());
-		}
-		items.push_back (MenuElem (_("Save As Template..."), sigc::mem_fun(*this, &RouteUI::save_as_template)));
-	}
-
-	if (!Profile->get_mixbus()) {
-		items.push_back (MenuElem (_("Rename..."), sigc::mem_fun(*this, &RouteUI::route_rename)));
-		/* do not allow rename if the track is record-enabled */
-		items.back().set_sensitive (!is_track() || !track()->rec_enable_control()->get_value());
-	}
-
-	items.push_back (SeparatorElem());
-	items.push_back (CheckMenuElem (_("Active")));
-	Gtk::CheckMenuItem* i = dynamic_cast<Gtk::CheckMenuItem *> (&items.back());
-	i->set_active (_route->active());
-	i->set_sensitive(! _session->transport_rolling());
-	i->signal_activate().connect (sigc::bind (sigc::mem_fun (*this, &RouteUI::set_route_active), !_route->active(), false));
-
-	if (!Profile->get_mixbus ()) {
+	   )
+	{
+		items.push_back (CheckMenuElem (_("Active")));
+		Gtk::CheckMenuItem* i = dynamic_cast<Gtk::CheckMenuItem *> (&items.back());
+		i->set_active (active);
+		i->set_sensitive (!_session->transport_rolling());
+		i->signal_activate().connect (sigc::bind (sigc::mem_fun (*this, &RouteUI::set_route_active), !_route->active(), false));
 		items.push_back (SeparatorElem());
+	}
+
+	if (active && !Profile->get_mixbus ()) {
 		items.push_back (CheckMenuElem (_("Strict I/O")));
-		i = dynamic_cast<Gtk::CheckMenuItem *> (&items.back());
+		Gtk::CheckMenuItem* i = dynamic_cast<Gtk::CheckMenuItem *> (&items.back());
 		i->set_active (_route->strict_io());
 		i->signal_activate().connect (sigc::hide_return (sigc::bind (sigc::mem_fun (*_route, &Route::set_strict_io), !_route->strict_io())));
+		items.push_back (SeparatorElem());
 	}
 
-	if (is_track()) {
-		items.push_back (SeparatorElem());
-
+	if (active && is_track()) {
 		Gtk::Menu* dio_menu = new Menu;
 		MenuList& dio_items = dio_menu->items();
 		dio_items.push_back (MenuElem (_("Record Pre-Fader"), sigc::bind (sigc::mem_fun (*this, &RouteUI::set_disk_io_point), DiskIOPreFader)));
@@ -1733,52 +1751,45 @@ MixerStrip::build_route_ops_menu ()
 		dio_items.push_back (MenuElem (_("Custom Record+Playback Positions"), sigc::bind (sigc::mem_fun (*this, &RouteUI::set_disk_io_point), DiskIOCustom)));
 
 		items.push_back (MenuElem (_("Disk I/O..."), *dio_menu));
+		items.push_back (SeparatorElem());
 	}
 
 	_plugin_insert_cnt = 0;
 	_route->foreach_processor (sigc::mem_fun (*this, &MixerStrip::help_count_plugins));
-	if (_plugin_insert_cnt > 0) {
-		items.push_back (SeparatorElem());
+	if (active && _plugin_insert_cnt > 0) {
 		items.push_back (MenuElem (_("Pin Connections..."), sigc::mem_fun (*this, &RouteUI::manage_pins)));
 	}
 
-	if (boost::dynamic_pointer_cast<MidiTrack>(_route) || _route->the_instrument ()) {
+	if (active && (boost::dynamic_pointer_cast<MidiTrack>(_route) || _route->the_instrument ())) {
 		items.push_back (MenuElem (_("Patch Selector..."),
 					sigc::mem_fun(*this, &RouteUI::select_midi_patch)));
 	}
 
-	if (_route->the_instrument () && _route->the_instrument ()->output_streams().n_audio() > 2) {
+	if (active && _route->the_instrument () && _route->the_instrument ()->output_streams().n_audio() > 2) {
 		// TODO ..->n_audio() > 1 && separate_output_groups) hard to check here every time.
 		items.push_back (MenuElem (_("Fan out to Busses"), sigc::bind (sigc::mem_fun (*this, &RouteUI::fan_out), true, true)));
 		items.push_back (MenuElem (_("Fan out to Tracks"), sigc::bind (sigc::mem_fun (*this, &RouteUI::fan_out), false, true)));
+		items.push_back (SeparatorElem());
 	}
 
-	items.push_back (SeparatorElem());
-	items.push_back (MenuElem (_("Adjust Latency..."), sigc::mem_fun (*this, &RouteUI::adjust_latency)));
-
-	items.push_back (SeparatorElem());
 	items.push_back (CheckMenuElem (_("Protect Against Denormals"), sigc::mem_fun (*this, &RouteUI::toggle_denormal_protection)));
 	denormal_menu_item = dynamic_cast<Gtk::CheckMenuItem *> (&items.back());
 	denormal_menu_item->set_active (_route->denormal_protection());
 
-	if (_route) {
-		/* note that this relies on selection being shared across editor and
-		   mixer (or global to the backend, in the future), which is the only
-		   sane thing for users anyway.
-		*/
+	/* note that this relies on selection being shared across editor and
+	 * mixer (or global to the backend, in the future), which is the only
+	 * sane thing for users anyway.
+	 */
+	StripableTimeAxisView* stav = PublicEditor::instance().get_stripable_time_axis_by_id (_route->id());
+	if (active && stav) {
+		Selection& selection (PublicEditor::instance().get_selection());
+		if (!selection.selected (stav)) {
+			selection.set (stav);
+		}
 
-		StripableTimeAxisView* stav = PublicEditor::instance().get_stripable_time_axis_by_id (_route->id());
-		if (stav) {
-			Selection& selection (PublicEditor::instance().get_selection());
-			if (!selection.selected (stav)) {
-				selection.set (stav);
-			}
-
-			if (!_route->is_master()) {
-				items.push_back (SeparatorElem());
-				items.push_back (MenuElem (_("Duplicate..."), sigc::mem_fun (*this, &RouteUI::duplicate_selected_routes)));
-			}
-
+		if (!_route->is_master()) {
+			items.push_back (SeparatorElem());
+			items.push_back (MenuElem (_("Duplicate..."), sigc::mem_fun (*this, &RouteUI::duplicate_selected_routes)));
 			items.push_back (SeparatorElem());
 			items.push_back (MenuElem (_("Remove"), sigc::mem_fun(PublicEditor::instance(), &PublicEditor::remove_tracks)));
 		}
@@ -1962,6 +1973,8 @@ MixerStrip::map_frozen ()
 
 	boost::shared_ptr<AudioTrack> at = audio_track();
 
+	bool en   = _route->active () || ARDOUR::Profile->get_mixbus();
+
 	if (at) {
 		switch (at->freeze_state()) {
 		case AudioTrack::Frozen:
@@ -1969,12 +1982,11 @@ MixerStrip::map_frozen ()
 			hide_redirect_editors ();
 			break;
 		default:
-			processor_box.set_sensitive (true);
-			// XXX need some way, maybe, to retoggle redirect editors
+			processor_box.set_sensitive (en);
 			break;
 		}
 	} else {
-		processor_box.set_sensitive (true);
+		processor_box.set_sensitive (en);
 	}
 	RouteUI::map_frozen ();
 }
@@ -2036,16 +2048,6 @@ MixerStrip::reset_strip_style ()
 	}
 }
 
-
-void
-MixerStrip::engine_stopped ()
-{
-}
-
-void
-MixerStrip::engine_running ()
-{
-}
 
 string
 MixerStrip::meter_point_string (MeterPoint mp)
@@ -2178,25 +2180,7 @@ MixerStrip::drop_send ()
 	}
 
 	send_gone_connection.disconnect ();
-	input_button.set_sensitive (true);
-	output_button.set_sensitive (true);
-	group_button.set_sensitive (true);
-	set_invert_sensitive (true);
-	gpm.meter_point_button.set_sensitive (true);
-	mute_button->set_sensitive (true);
-	solo_button->set_sensitive (true);
-	solo_isolated_led->set_sensitive (true);
-	solo_safe_led->set_sensitive (true);
-	monitor_input_button->set_sensitive (true);
-	monitor_disk_button->set_sensitive (true);
-	_comment_button.set_sensitive (true);
-	trim_control.set_sensitive (true);
-	if (midi_input_enable_button) {
-		midi_input_enable_button->set_sensitive (true);
-	}
-	control_slave_ui.set_sensitive (true);
 	RouteUI::check_rec_enable_sensitivity ();
-	set_button_names (); // update solo button visual state
 }
 
 void
@@ -2204,6 +2188,7 @@ MixerStrip::set_current_delivery (boost::shared_ptr<Delivery> d)
 {
 	_current_delivery = d;
 	DeliveryChanged (_current_delivery);
+	update_sensitivity ();
 }
 
 void
@@ -2230,28 +2215,6 @@ MixerStrip::show_send (boost::shared_ptr<Send> send)
 	panner_ui().setup_pan ();
 	panner_ui().set_send_drawing_mode (true);
 	panner_ui().show_all ();
-
-	input_button.set_sensitive (false);
-	group_button.set_sensitive (false);
-	set_invert_sensitive (false);
-	gpm.meter_point_button.set_sensitive (false);
-	mute_button->set_sensitive (false);
-	solo_button->set_sensitive (false);
-	rec_enable_button->set_sensitive (false);
-	solo_isolated_led->set_sensitive (false);
-	solo_safe_led->set_sensitive (false);
-	monitor_input_button->set_sensitive (false);
-	monitor_disk_button->set_sensitive (false);
-	_comment_button.set_sensitive (false);
-	trim_control.set_sensitive (false);
-	if (midi_input_enable_button) {
-		midi_input_enable_button->set_sensitive (false);
-	}
-	control_slave_ui.set_sensitive (false);
-
-	if (boost::dynamic_pointer_cast<InternalSend>(send)) {
-		output_button.set_sensitive (false);
-	}
 
 	reset_strip_style ();
 }
@@ -2292,7 +2255,7 @@ MixerStrip::set_button_names ()
 			monitor_section_button->set_text (_("Mon"));
 		}
 
-		if (_route && _route->solo_safe_control()->solo_safe()) {
+		if ((_route && _route->solo_safe_control()->solo_safe()) || !solo_button->get_sensitive()) {
 			solo_button->set_visual_state (Gtkmm2ext::VisualState (solo_button->visual_state() | Gtkmm2ext::Insensitive));
 		} else {
 			solo_button->set_visual_state (Gtkmm2ext::VisualState (solo_button->visual_state() & ~Gtkmm2ext::Insensitive));
@@ -2321,7 +2284,7 @@ MixerStrip::set_button_names ()
 			monitor_section_button->set_text (S_("Mon|O"));
 		}
 
-		if (_route && _route->solo_safe_control()->solo_safe()) {
+		if ((_route && _route->solo_safe_control()->solo_safe()) || !solo_button->get_sensitive()) {
 			solo_button->set_visual_state (Gtkmm2ext::VisualState (solo_button->visual_state() | Gtkmm2ext::Insensitive));
 		} else {
 			solo_button->set_visual_state (Gtkmm2ext::VisualState (solo_button->visual_state() & ~Gtkmm2ext::Insensitive));
@@ -2449,7 +2412,48 @@ MixerStrip::add_output_port (DataType t)
 void
 MixerStrip::route_active_changed ()
 {
+	RouteUI::route_active_changed ();
 	reset_strip_style ();
+	update_sensitivity ();
+}
+
+void
+MixerStrip::update_sensitivity ()
+{
+	bool en   = _route->active () || ARDOUR::Profile->get_mixbus();
+	bool send = _current_delivery && boost::dynamic_pointer_cast<Send>(_current_delivery) != 0;
+	bool aux  = _current_delivery && boost::dynamic_pointer_cast<InternalSend>(_current_delivery) != 0;
+
+	if (route()->is_master()) {
+		solo_iso_table.set_sensitive (false);
+		control_slave_ui.set_sensitive (false);
+	} else {
+		solo_iso_table.set_sensitive (en && !send);
+		control_slave_ui.set_sensitive (en && !send);
+	}
+
+	input_button.set_sensitive (en && !send);
+	group_button.set_sensitive (en && !send);
+	set_invert_sensitive (en && !send);
+	gpm.meter_point_button.set_sensitive (en && !send);
+	mute_button->set_sensitive (en && !send);
+	solo_button->set_sensitive (en && !send);
+	solo_isolated_led->set_sensitive (en && !send);
+	solo_safe_led->set_sensitive (en && !send);
+	monitor_input_button->set_sensitive (en && !send);
+	monitor_disk_button->set_sensitive (en && !send);
+	_comment_button.set_sensitive (en && !send);
+	trim_control.set_sensitive (en && !send);
+	control_slave_ui.set_sensitive (en && !send);
+
+	if (midi_input_enable_button) {
+		midi_input_enable_button->set_sensitive (en && !send);
+	}
+
+	output_button.set_sensitive (en && !aux);
+
+	map_frozen ();
+	set_button_names (); // update solo button visual state
 }
 
 void
@@ -2524,7 +2528,7 @@ MixerStrip::popup_level_meter_menu (GdkEventButton* ev)
 
 	RadioMenuItem::Group group;
 
-	PBD::Unwinder<bool> (_suspend_menu_callbacks, true);
+	PBD::Unwinder<bool> uw (_suspend_menu_callbacks, true);
 	add_level_meter_item_point (items, group, _("Input"), MeterInput);
 	add_level_meter_item_point (items, group, _("Pre Fader"), MeterPreFader);
 	add_level_meter_item_point (items, group, _("Post Fader"), MeterPostFader);
@@ -2657,4 +2661,14 @@ bool
 MixerStrip::set_marked_for_display (bool yn)
 {
 	return RouteUI::mark_hidden (!yn);
+}
+
+void
+MixerStrip::hide_master_spacer (bool yn)
+{
+	if (_mixer_owned && route()->is_master() && !yn) {
+		spacer.show();
+	} else {
+		spacer.hide();
+	}
 }

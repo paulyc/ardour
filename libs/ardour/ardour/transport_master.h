@@ -1,21 +1,20 @@
 /*
-    Copyright (C) 2002 Paul Davis
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-*/
+ * Copyright (C) 2018-2019 Paul Davis <paul@linuxaudiosystems.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #ifndef __ardour_transport_master_h__
 #define __ardour_transport_master_h__
@@ -44,9 +43,9 @@
 #include "midi++/parser.h"
 #include "midi++/types.h"
 
-/* used for delta_string(): */
+/* used for delta_string(): (note: \u00B1 is the plus-or-minus sign) */
 #define PLUSMINUS(A) ( ((A)<0) ? "-" : (((A)>0) ? "+" : "\u00B1") )
-#define LEADINGZERO(A) ( (A)<10 ? "   " : (A)<100 ? "  " : (A)<1000 ? " " : "" )
+#define LEADINGZERO(A) ( (A)<10 ? "    " : (A)<100 ? "   " : (A)<1000 ? "  " : (A)<10000 ? " " : "" )
 
 namespace ARDOUR {
 
@@ -210,9 +209,12 @@ class LIBARDOUR_API TransportMaster : public PBD::Stateful {
 	 *
 	 * @param speed - The transport speed requested
 	 * @param position - The transport position requested
+	 * @param lp last position (used for flywheel)
+	 * @param when last timestamp (used for flywheel)
+	 * @param now monotonic sample time
 	 * @return - The return value is currently ignored (see Session::follow_slave)
 	 */
-	virtual bool speed_and_position (double& speed, samplepos_t& position, samplepos_t & lp, samplepos_t & when, samplepos_t now);
+	virtual bool speed_and_position (double& speed, samplepos_t& position, samplepos_t& lp, samplepos_t& when, samplepos_t now);
 
 	virtual void reset (bool with_position) = 0;
 
@@ -231,6 +233,16 @@ class LIBARDOUR_API TransportMaster : public PBD::Stateful {
 	 * disconnected from ARDOUR.
 	 */
 	virtual bool ok() const = 0;
+
+	/**
+	 * reports to ARDOUR whether it is possible to use this slave
+	 *
+	 * @return - true if the slave can be used.
+	 *
+	 * Only the JACK ("Engine") slave is ever likely to return false,
+	 * if JACK is not being used for the Audio/MIDI backend.
+	 */
+	virtual bool usable() const { return true; }
 
 	/**
 	 * reports to ARDOUR whether the slave is in the process of starting
@@ -333,11 +345,10 @@ class LIBARDOUR_API TransportMaster : public PBD::Stateful {
 
 	virtual void check_backend() {}
 	virtual bool allow_request (TransportRequestSource, TransportRequestType) const;
+	std::string allowed_request_string () const;
 
 	TransportRequestType request_mask() const { return _request_mask; }
 	void set_request_mask (TransportRequestType);
-
-	void get_current (double&, samplepos_t&, samplepos_t);
 
 	/* this is set at construction, and not changeable later, so it is not
 	 * a property
@@ -349,6 +360,8 @@ class LIBARDOUR_API TransportMaster : public PBD::Stateful {
 	std::string display_name (bool sh/*ort*/ = true) const;
 
 	virtual void unregister_port ();
+	void connect_port_using_state ();
+	virtual void create_port () = 0;
 
   protected:
 	SyncSource      _type;
@@ -375,6 +388,8 @@ class LIBARDOUR_API TransportMaster : public PBD::Stateful {
 	double b, c;
 
 	boost::shared_ptr<Port>  _port;
+
+	XMLNode port_node;
 
 	PBD::ScopedConnection port_connection;
 	bool connection_handler (boost::weak_ptr<ARDOUR::Port>, std::string name1, boost::weak_ptr<ARDOUR::Port>, std::string name2, bool yn);
@@ -443,6 +458,8 @@ class LIBARDOUR_API MTC_TransportMaster : public TimecodeTransportMaster, public
         std::string position_string() const;
 	std::string delta_string() const;
 
+	void create_port ();
+
   private:
 	PBD::ScopedConnectionList port_connections;
 	PBD::ScopedConnection     config_connection;
@@ -484,6 +501,9 @@ class LIBARDOUR_API MTC_TransportMaster : public TimecodeTransportMaster, public
 	void init_mtc_dll(samplepos_t, double);
 	void parse_timecode_offset();
 	void parameter_changed(std::string const & p);
+
+	void resync_latency();
+        LatencyRange  mtc_slave_latency;
 };
 
 class LIBARDOUR_API LTC_TransportMaster : public TimecodeTransportMaster {
@@ -508,6 +528,8 @@ public:
 	Timecode::TimecodeFormat apparent_timecode_format() const;
 	std::string position_string() const;
 	std::string delta_string() const;
+
+	void create_port ();
 
   private:
 	void parse_ltc(const pframes_t, const Sample* const, const samplecnt_t);
@@ -565,7 +587,6 @@ class LIBARDOUR_API MIDIClock_TransportMaster : public TransportMaster, public T
 	void reset (bool with_pos);
 	bool locked() const;
 	bool ok() const;
-	bool starting() const;
 
 	samplecnt_t update_interval () const;
 	samplecnt_t resolution () const;
@@ -576,6 +597,8 @@ class LIBARDOUR_API MIDIClock_TransportMaster : public TransportMaster, public T
 	std::string delta_string() const;
 
 	float bpm() const { return _bpm; }
+
+	void create_port ();
 
   protected:
 	PBD::ScopedConnectionList port_connections;
@@ -627,6 +650,7 @@ class LIBARDOUR_API Engine_TransportMaster : public TransportMaster
 	void reset (bool with_position);
 	bool locked() const;
 	bool ok() const;
+	bool usable() const;
 	samplecnt_t update_interval () const;
 	samplecnt_t resolution () const { return 1; }
 	bool requires_seekahead () const { return false; }
@@ -637,6 +661,8 @@ class LIBARDOUR_API Engine_TransportMaster : public TransportMaster
 
 	std::string position_string() const;
 	std::string delta_string() const;
+
+	void create_port () { }
 
   private:
         AudioEngine& engine;

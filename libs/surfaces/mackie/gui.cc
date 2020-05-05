@@ -1,20 +1,24 @@
 /*
-	Copyright (C) 2010 Paul Davis
-
-	This program is free software; you can redistribute it and/or modify
-	it under the terms of the GNU General Public License as published by
-	the Free Software Foundation; either version 2 of the License, or
-	(at your option) any later version.
-
-	This program is distributed in the hope that it will be useful,
-	but WITHOUT ANY WARRANTY; without even the implied warranty of
-	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-	GNU General Public License for more details.
-
-	You should have received a copy of the GNU General Public License
-	along with this program; if not, write to the Free Software
-	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-*/
+ * Copyright (C) 2006-2007 John Anderson
+ * Copyright (C) 2011 Carl Hetherington <carl@carlh.net>
+ * Copyright (C) 2012-2019 Paul Davis <paul@linuxaudiosystems.com>
+ * Copyright (C) 2014-2015 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015-2017 Len Ovens <len@ovenwerks.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
 
 #include <gtkmm/comboboxtext.h>
 #include <gtkmm/box.h>
@@ -367,7 +371,7 @@ MackieControlProtocolGUI::device_dependent_widget ()
 
 			if (!surface) {
 				PBD::fatal << string_compose (_("programming error: %1\n"), string_compose ("n=%1 surface not found!", n)) << endmsg;
-				/*NOTREACHED*/
+				abort (); /*NOTREACHED*/
 			}
 
 			Gtk::ComboBox* input_combo = manage (new Gtk::ComboBox);
@@ -437,7 +441,7 @@ MackieControlProtocolGUI::make_action_renderer (Glib::RefPtr<TreeStore> model, G
 	renderer->property_editable() = true;
 	renderer->property_text_column() = 0;
 	renderer->property_has_entry() = false;
-	renderer->signal_edited().connect (sigc::bind (sigc::mem_fun(*this, &MackieControlProtocolGUI::action_changed), column));
+	renderer->signal_changed().connect (sigc::bind (sigc::mem_fun(*this, &MackieControlProtocolGUI::action_changed), column));
 
 	return renderer;
 }
@@ -629,26 +633,31 @@ MackieControlProtocolGUI::refresh_function_key_editor ()
 }
 
 void
-MackieControlProtocolGUI::action_changed (const Glib::ustring &sPath, const Glib::ustring &text, TreeModelColumnBase col)
+MackieControlProtocolGUI::action_changed (const Glib::ustring &sPath, const TreeModel::iterator & iter, TreeModelColumnBase col)
 {
+	string action_path = (*iter)[action_model.columns().path];
+
 	// Remove Binding is not in the action map but still valid
-	bool remove (false);
-	if ( text == "Remove Binding") {
+
+	bool remove = false;
+
+	if (action_path == "Remove Binding") {
 		remove = true;
 	}
+
 	Gtk::TreePath path(sPath);
 	Gtk::TreeModel::iterator row = function_key_model->get_iter(path);
 
 	if (row) {
 
-		std::map<std::string,std::string>::iterator i = action_map.find (text);
+		Glib::RefPtr<Gtk::Action> act = ActionManager::get_action (action_path, false);
 
-		if (i == action_map.end()) {
+		if (!act) {
+			cerr << action_path << " not found in action map\n";
 			if (!remove) {
 				return;
 			}
 		}
-		Glib::RefPtr<Gtk::Action> act = ActionManager::get_action (i->second, false);
 
 		if (act || remove) {
 			/* update visible text, using string supplied by
@@ -659,7 +668,7 @@ MackieControlProtocolGUI::action_changed (const Glib::ustring &sPath, const Glib
 				Glib::ustring dot = "\u2022";
 				(*row).set_value (col.index(), dot);
 			} else {
-				(*row).set_value (col.index(), text);
+				(*row).set_value (col.index(), act->get_label());
 			}
 
 			/* update the current DeviceProfile, using the full
@@ -691,7 +700,7 @@ MackieControlProtocolGUI::action_changed (const Glib::ustring &sPath, const Glib
 			if (remove) {
 				_cp.device_profile().set_button_action ((*row)[function_key_columns.id], modifier, "");
 			} else {
-				_cp.device_profile().set_button_action ((*row)[function_key_columns.id], modifier, i->second);
+				_cp.device_profile().set_button_action ((*row)[function_key_columns.id], modifier, action_path);
 			}
 
 			_ignore_profile_changed = true;
